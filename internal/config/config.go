@@ -1,0 +1,114 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Config holds the runtime configuration for s3web.
+type Config struct {
+	ListenAddr string
+	BaseURL    string
+
+	// Storage & Metadata Backend ("aws" or "memory"/"local" for local dev/testing)
+	BackendMode   string
+	AWSRegion     string
+	S3Bucket      string
+	S3Endpoint    string // Optional custom endpoint (e.g., S3 VPC Gateway / LocalStack / MinIO)
+	DynamoDBTable string
+	SQSQueueURL   string
+	LocalDataDir  string
+
+	// Session & Security
+	SessionSecret string
+	CookieSecure  bool
+
+	// Human OIDC SSO Configuration
+	OIDCEnabled      bool
+	OIDCIssuerURL    string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCRedirectURL  string
+	OIDCGroupsClaim  string
+
+	// GitHub Actions OIDC JWT Configuration
+	GitHubOIDCEnabled   bool
+	GitHubOIDCIssuerURL string
+	GitHubOIDCAudience  string
+	GitHubPinnedJWKSJSON string // Optional pinned JWKS JSON for air-gapped private VPCs
+
+	// Bootstrap Admin & Default Nexus Service Account (seeded on first boot)
+	BootstrapAdminEmail      string
+	BootstrapAdminPassword   string
+	BootstrapAdminOIDCGroup  string
+	BootstrapNexusAccountID  string
+	BootstrapNexusAccountKey string
+
+	// Log Retention
+	AccessLogRetentionDays int
+	WorkerPollInterval     time.Duration
+}
+
+// Load reads configuration from environment variables with sensible defaults.
+func Load() *Config {
+	baseURL := getEnv("S3WEB_BASE_URL", "http://localhost:8080")
+	return &Config{
+		ListenAddr:               getEnv("S3WEB_LISTEN_ADDR", ":8080"),
+		BaseURL:                  strings.TrimRight(baseURL, "/"),
+		BackendMode:              strings.ToLower(getEnv("S3WEB_BACKEND_MODE", "local")), // "aws" or "local"
+		AWSRegion:                getEnv("AWS_REGION", "us-east-1"),
+		S3Bucket:                 getEnv("S3WEB_S3_BUCKET", "corp-iso-artifacts"),
+		S3Endpoint:               getEnv("S3WEB_S3_ENDPOINT", ""),
+		DynamoDBTable:            getEnv("S3WEB_DYNAMODB_TABLE", "s3web-metadata"),
+		SQSQueueURL:              getEnv("S3WEB_SQS_QUEUE_URL", ""),
+		LocalDataDir:             getEnv("S3WEB_LOCAL_DATA_DIR", "./.s3web-data"),
+		SessionSecret:            getEnv("S3WEB_SESSION_SECRET", "dev-secret-change-in-production-32bytes!"),
+		CookieSecure:             getEnvBool("S3WEB_COOKIE_SECURE", false),
+		OIDCEnabled:              getEnvBool("S3WEB_OIDC_ENABLED", false),
+		OIDCIssuerURL:            getEnv("S3WEB_OIDC_ISSUER_URL", ""),
+		OIDCClientID:             getEnv("S3WEB_OIDC_CLIENT_ID", ""),
+		OIDCClientSecret:         getEnv("S3WEB_OIDC_CLIENT_SECRET", ""),
+		OIDCRedirectURL:          getEnv("S3WEB_OIDC_REDIRECT_URL", baseURL+"/auth/callback"),
+		OIDCGroupsClaim:          getEnv("S3WEB_OIDC_GROUPS_CLAIM", "groups"),
+		GitHubOIDCEnabled:        getEnvBool("S3WEB_GITHUB_OIDC_ENABLED", true),
+		GitHubOIDCIssuerURL:      getEnv("S3WEB_GITHUB_OIDC_ISSUER", "https://token.actions.githubusercontent.com"),
+		GitHubOIDCAudience:       getEnv("S3WEB_GITHUB_OIDC_AUDIENCE", baseURL),
+		GitHubPinnedJWKSJSON:     getEnv("S3WEB_GITHUB_PINNED_JWKS_JSON", ""),
+		BootstrapAdminEmail:      getEnv("S3WEB_BOOTSTRAP_ADMIN_EMAIL", "admin@example.com"),
+		BootstrapAdminPassword:   getEnv("S3WEB_BOOTSTRAP_ADMIN_PASSWORD", "admin-change-me"),
+		BootstrapAdminOIDCGroup:  getEnv("S3WEB_BOOTSTRAP_ADMIN_GROUP", "platform-admins"),
+		BootstrapNexusAccountID:  getEnv("S3WEB_BOOTSTRAP_NEXUS_ID", "svc-nexus-proxy"),
+		BootstrapNexusAccountKey: getEnv("S3WEB_BOOTSTRAP_NEXUS_SECRET", "nexus-proxy-secret-change-me"),
+		AccessLogRetentionDays:   getEnvInt("S3WEB_LOG_RETENTION_DAYS", 90),
+		WorkerPollInterval:       time.Duration(getEnvInt("S3WEB_WORKER_POLL_SECONDS", 15)) * time.Second,
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return fallback
+	}
+	return v == "1" || v == "true" || v == "yes"
+}
+
+func getEnvInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return n
+	}
+	return fallback
+}
+

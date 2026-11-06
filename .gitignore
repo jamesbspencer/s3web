@@ -1,0 +1,35 @@
+# Go build artifacts & coverage
+/s3web
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.txt
+
+# Local runtime data store
+.s3web-data/
+
+# Terraform state, caches & local variables
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+!*.tfvars.example
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# OS & Editor files
+.DS_Store
+.idea/
+*.swp
+*.swo

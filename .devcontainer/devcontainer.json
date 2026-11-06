@@ -1,0 +1,39 @@
+{
+  "name": "s3web (Go 1.23 + Terraform)",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "s3web UI & Sonatype Nexus /raw Proxy",
+      "onAutoForward": "notify"
+    }
+  },
+  "containerEnv": {
+    "S3WEB_LISTEN_ADDR": ":8080",
+    "S3WEB_BASE_URL": "http://localhost:8080",
+    "S3WEB_BACKEND_MODE": "local",
+    "S3WEB_S3_BUCKET": "corp-iso-artifacts-local",
+    "S3WEB_BOOTSTRAP_ADMIN_EMAIL": "admin@example.com",
+    "S3WEB_BOOTSTRAP_ADMIN_PASSWORD": "admin-change-me",
+    "S3WEB_BOOTSTRAP_NEXUS_ID": "svc-nexus-proxy",
+    "S3WEB_BOOTSTRAP_NEXUS_SECRET": "nexus-proxy-secret-change-me"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "hashicorp.terraform"
+      ],
+      "settings": {
+        "go.useLanguageServer": true,
+        "go.lintTool": "golangci-lint",
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  "postCreateCommand": "go version && terraform version && go test -v ./...",
+  "remoteUser": "vscode"
+}
+

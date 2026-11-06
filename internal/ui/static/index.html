@@ -1,0 +1,1372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>s3web — Private S3 Artifact Browser &amp; Sonatype Nexus Proxy</title>
+  <link rel="icon" href="/logo.png" />
+  <style>
+    :root {
+      --bg-base: #0b0f19;
+      --bg-panel: #111827;
+      --bg-elevated: #1e293b;
+      --bg-hover: #263349;
+      --border: #1f2937;
+      --border-subtle: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --indigo: #818cf8;
+      --purple: #c084fc;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-base);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Header */
+    .topbar {
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--text-main);
+    }
+    .brand-logo {
+      height: 44px;
+      width: auto;
+      max-width: 140px;
+      border-radius: 6px;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+    .bucket-pill {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+    .search-bar {
+      flex: 1;
+      max-width: 460px;
+      display: flex;
+      gap: 8px;
+    }
+    input, select, textarea {
+      background: var(--bg-base);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--accent);
+    }
+    .search-bar input { width: 100%; }
+
+    .user-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Navigation Tabs */
+    .nav-tabs {
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      gap: 24px;
+    }
+    .nav-tab {
+      padding: 12px 4px;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-weight: 600;
+      border-bottom: 2px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      font-size: 13.5px;
+    }
+    .nav-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    /* Main Content Container */
+    .main {
+      padding: 20px 24px;
+      flex: 1;
+      max-width: 1600px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* Toolbar & Breadcrumbs */
+    .toolbar {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .breadcrumbs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      flex-wrap: wrap;
+    }
+    .crumb {
+      color: var(--accent);
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .crumb:hover { background: var(--bg-elevated); }
+    .crumb-sep { color: var(--text-dim); }
+
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* Buttons */
+    .btn {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 7px 12px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: var(--bg-hover); }
+    .btn-primary {
+      background: var(--accent-hover);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: #0369a1; }
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+    .btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
+    .btn-sm { padding: 4px 8px; font-size: 11.5px; }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+    .tier-FA { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
+    .tier-IA { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); }
+    .tier-AIA { background: rgba(129, 140, 248, 0.15); color: #a5b4fc; border: 1px solid rgba(129, 140, 248, 0.35); }
+    .tier-AA { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+    .tier-DAA { background: rgba(192, 132, 252, 0.15); color: #d8b4fe; border: 1px solid rgba(192, 132, 252, 0.4); }
+
+    .perm-badge {
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .perm-on { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+    .perm-off { background: rgba(100, 116, 139, 0.2); color: #64748b; }
+
+    /* Table */
+    .card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+    th {
+      background: rgba(30, 41, 59, 0.6);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    tr:hover td { background: rgba(30, 41, 59, 0.35); }
+    .mono { font-family: var(--font-mono); font-size: 12.5px; }
+    .hash-cell {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-base);
+      border: 1px solid var(--border-subtle);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #cbd5e1;
+    }
+    .copy-btn {
+      cursor: pointer;
+      color: var(--accent);
+      background: none;
+      border: none;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .copy-btn:hover { text-decoration: underline; }
+
+    /* Slide-over Drawer */
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      display: none;
+      justify-content: flex-end;
+      z-index: 100;
+    }
+    .drawer-backdrop.open { display: flex; }
+    .drawer {
+      background: var(--bg-panel);
+      width: 100%;
+      max-width: 780px;
+      height: 100%;
+      border-left: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 24px;
+      gap: 20px;
+    }
+    .drawer-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      background: var(--bg-base);
+      border: 1px solid var(--border);
+      padding: 16px;
+      border-radius: 8px;
+    }
+    .meta-item label {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .hash-box {
+      background: var(--bg-base);
+      border: 1px solid var(--border);
+      padding: 12px;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      word-break: break-all;
+      margin-top: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* Modals */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 110;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      width: 100%;
+      max-width: 560px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-group label {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .checkbox-row {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #0284c7;
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-weight: 600;
+      display: none;
+      z-index: 200;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="topbar">
+    <div class="brand">
+      <img src="/logo.png" alt="Logo" class="brand-logo" />
+      <div>
+        <div>s3web &mdash; S3 Artifact Repository</div>
+        <div style="font-size:11px; color:var(--text-muted); font-weight:400;">Private VPC (VPN Only) &bull; S3 Intelligent-Tiering &bull; Sonatype Nexus Proxy</div>
+      </div>
+      <span class="bucket-pill" id="bucketPill">s3://corp-iso-artifacts</span>
+    </div>
+
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="Search filename, prefix, or paste SHA-256 / SHA-1 digest..." onkeydown="if(event.key==='Enter') runSearch()" />
+      <button class="btn" onclick="runSearch()">Search</button>
+      <button class="btn" onclick="clearSearch()">Reset</button>
+    </div>
+
+    <div class="user-controls">
+      <div id="effectivePermBadges" style="display:flex; gap:4px;"></div>
+      <select id="personaSelect" onchange="switchPersona(this.value)" title="Simulate SSO User / Group Persona">
+        <option value="admin">SSO: admin@example.com (platform-admins)</option>
+        <option value="releng">SSO: rel-eng@example.com (release-engineering: Upload Only)</option>
+        <option value="curator">SSO: curator@example.com (App Group iso-curators: Upload+Delete)</option>
+        <option value="viewer">SSO: viewer@example.com (Default Read-Only)</option>
+      </select>
+    </div>
+  </header>
+
+  <!-- View Switcher Tabs -->
+  <nav class="nav-tabs">
+    <button class="nav-tab active" id="tabBrowserBtn" onclick="switchTab('browser')">
+      <span>Artifact &amp; ISO Browser</span>
+    </button>
+    <button class="nav-tab" id="tabPermissionsBtn" onclick="switchTab('permissions')">
+      <span>In-App Permissions (Upload / Delete RBAC)</span>
+    </button>
+    <button class="nav-tab" id="tabServiceAccountsBtn" onclick="switchTab('service-accounts')">
+      <span>Service Accounts &amp; GitHub OIDC JWT</span>
+    </button>
+  </nav>
+
+  <!-- Main Workspace -->
+  <main class="main">
+
+    <!-- TAB 1: ARTIFACT & ISO BROWSER -->
+    <section id="viewBrowser">
+      <div class="toolbar">
+        <div class="breadcrumbs" id="breadcrumbs"></div>
+        <div class="toolbar-actions">
+          <label style="font-size:12px; color:var(--text-muted);">Intelligent-Tiering Filter:</label>
+          <select id="tierFilter" onchange="loadDirectory(currentPrefix)">
+            <option value="">All Intelligent-Tiering Sub-Tiers</option>
+            <option value="FA">Frequent Access (FA - Hot)</option>
+            <option value="IA">Infrequent Access (IA - 30-90d)</option>
+            <option value="AIA">Archive Instant Access (AIA - 90d+)</option>
+            <option value="AA">Archive Access (AA - Async Restore)</option>
+            <option value="DAA">Deep Archive Access (DAA - Async Restore)</option>
+          </select>
+          <a class="btn" id="rawAutoindexLink" href="/raw/" target="_blank">Open /raw/ Nexus Index</a>
+          <button class="btn" onclick="loadDirectory(currentPrefix)">Refresh</button>
+          <button class="btn btn-primary" id="uploadBtn" onclick="openUploadModal()" style="display:none;">+ Upload ISO / Archive</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Size</th>
+              <th>S3 Intelligent-Tiering</th>
+              <th>SHA-256 (Linear)</th>
+              <th>SHA-1 (Linear)</th>
+              <th>Last Accessed (UTC)</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="browserTableBody">
+            <tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:32px;">Loading artifacts...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 2: IN-APP PERMISSIONS & APP GROUPS -->
+    <section id="viewPermissions" style="display:none;">
+      <div class="toolbar">
+        <div>
+          <h3 style="font-size:15px;">In-App Upload &amp; Delete Permission Grants</h3>
+          <p style="font-size:12px; color:var(--text-muted);">All users default to Read-Only. Grant Upload, Delete, or Admin rights to OIDC Groups, In-App Groups, SSO Users, GitHub OIDC Workflows, or Service Accounts.</p>
+        </div>
+        <div class="toolbar-actions">
+          <button class="btn btn-primary" onclick="openGrantModal()">+ New In-App Access Grant</button>
+          <button class="btn" onclick="openGroupModal()">+ New App-Managed Group</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:24px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Subject Type</th>
+              <th>Subject Identifier / Claim Pattern</th>
+              <th>Allowed Bucket Prefixes</th>
+              <th>Read</th>
+              <th>Upload</th>
+              <th>Delete</th>
+              <th>Admin</th>
+              <th>Updated By</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="grantsTableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="toolbar">
+        <div>
+          <h3 style="font-size:15px;">App-Managed Groups</h3>
+          <p style="font-size:12px; color:var(--text-muted);">Group SSO users directly inside s3web to grant Upload or Delete permissions without waiting on external IdP changes.</p>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Group Name</th>
+              <th>Description</th>
+              <th>SSO User Members</th>
+              <th>Updated At</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="groupsTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 3: SERVICE ACCOUNTS & GITHUB ACTIONS OIDC JWT -->
+    <section id="viewServiceAccounts" style="display:none;">
+      <div class="toolbar">
+        <div>
+          <h3 style="font-size:15px;">Service Accounts (Sonatype Nexus Proxy &amp; Automation)</h3>
+          <p style="font-size:12px; color:var(--text-muted);">Configure HTTP Basic Auth and Bearer tokens for Sonatype Nexus Raw Proxy repositories and internal scripts.</p>
+        </div>
+        <div class="toolbar-actions">
+          <button class="btn btn-primary" onclick="openServiceAccountModal()">+ Create Service Account</button>
+        </div>
+      </div>
+
+      <div id="newSecretBanner" class="card" style="display:none; padding:16px; margin-bottom:20px; border-color:var(--accent);"></div>
+
+      <div class="card" style="margin-bottom:24px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Account ID</th>
+              <th>Name &amp; Description</th>
+              <th>Created By</th>
+              <th>Last Used</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="serviceAccountsTableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="card" style="padding:20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <div>
+            <h3 style="font-size:15px;">GitHub Actions Workflow OIDC JWT Authentication</h3>
+            <p style="font-size:12px; color:var(--text-muted);">Workflows authenticate secretlessly via <code>Authorization: Bearer &lt;GitHub-OIDC-JWT&gt;</code> matched against in-app <code>GITHUB_WORKFLOW</code> Access Grants.</p>
+          </div>
+          <button class="btn btn-primary" onclick="generateTestGitHubJWT()">Mint Test GitHub Workflow JWT</button>
+        </div>
+        <div id="githubJwtOutput" style="display:none; margin-top:12px;"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Slide-Over Detail, Hashes, Tiering & Per-Item Access Log Drawer -->
+  <div class="drawer-backdrop" id="itemDrawerBackdrop" onclick="if(event.target===this) closeDrawer()">
+    <div class="drawer">
+      <div class="drawer-header">
+        <div>
+          <div style="font-size:11px; color:var(--accent); text-transform:uppercase; font-weight:700;">Artifact Metadata, Checksums &amp; Access History</div>
+          <h2 id="drawerFilename" style="font-size:18px; margin-top:4px; word-break:break-all;"></h2>
+        </div>
+        <button class="btn" onclick="closeDrawer()">Close &#10005;</button>
+      </div>
+
+      <div class="meta-grid" id="drawerMetaGrid"></div>
+
+      <!-- Intelligent-Tiering Control Bar -->
+      <div class="card" style="padding:14px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <div>
+          <div style="font-size:12px; font-weight:600;">S3 Intelligent-Tiering State</div>
+          <div style="font-size:11.5px; color:var(--text-muted);" id="drawerTierNote"></div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-primary btn-sm" id="drawerRestoreBtn" style="display:none;" onclick="restoreCurrentObject()">Restore from Archive (s3:RestoreObject)</button>
+          <select id="drawerSimulateTier" class="btn-sm" onchange="simulateTierChange(this.value)">
+            <option value="">Simulate Tier Transition...</option>
+            <option value="FA">Frequent Access (FA)</option>
+            <option value="IA">Infrequent Access (IA)</option>
+            <option value="AIA">Archive Instant Access (AIA)</option>
+            <option value="AA">Archive Access (AA - Async)</option>
+            <option value="DAA">Deep Archive Access (DAA - Async)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Full-File Linear Checksums -->
+      <div>
+        <h4 style="font-size:13px; color:var(--text-muted); text-transform:uppercase;">Verified Full-File Linear Hashes &amp; Nexus Sidecars</h4>
+        <div class="hash-box">
+          <div>
+            <div style="font-size:11px; color:var(--text-muted);">SHA-256</div>
+            <div id="drawerSha256"></div>
+          </div>
+          <div style="display:flex; gap:8px; flex-shrink:0;">
+            <button class="btn btn-sm" onclick="copyText(currentDrawerItem.sha256)">Copy</button>
+            <a class="btn btn-sm" id="drawerSha256Link" target="_blank">.sha256</a>
+          </div>
+        </div>
+        <div class="hash-box">
+          <div>
+            <div style="font-size:11px; color:var(--text-muted);">SHA-1</div>
+            <div id="drawerSha1"></div>
+          </div>
+          <div style="display:flex; gap:8px; flex-shrink:0;">
+            <button class="btn btn-sm" onclick="copyText(currentDrawerItem.sha1)">Copy</button>
+            <a class="btn btn-sm" id="drawerSha1Link" target="_blank">.sha1</a>
+          </div>
+        </div>
+        <div class="hash-box">
+          <div>
+            <div style="font-size:11px; color:var(--text-muted);">Sonatype Nexus Raw Proxy URL</div>
+            <div id="drawerRawUrl"></div>
+          </div>
+          <button class="btn btn-sm" onclick="copyText(document.getElementById('drawerRawUrl').textContent)">Copy URL</button>
+        </div>
+      </div>
+
+      <!-- Per-Item Access Logs -->
+      <div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+          <h4 style="font-size:13px; color:var(--text-muted); text-transform:uppercase;">Per-Item Access Logs</h4>
+          <div style="display:flex; gap:8px;">
+            <select id="logActionFilter" onchange="loadObjectLogs(currentDrawerItem.key)">
+              <option value="ALL">All Actions</option>
+              <option value="DOWNLOAD">DOWNLOAD</option>
+              <option value="UPLOAD">UPLOAD</option>
+              <option value="RESTORE">RESTORE</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+            <input type="text" id="logActorFilter" placeholder="Filter actor / service acct..." oninput="loadObjectLogs(currentDrawerItem.key)" />
+          </div>
+        </div>
+        <div class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp (UTC)</th>
+                <th>Principal</th>
+                <th>Type</th>
+                <th>Action</th>
+                <th>Client IP</th>
+                <th>Bytes / Status</th>
+              </tr>
+            </thead>
+            <tbody id="drawerLogsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upload Artifact Modal -->
+  <div class="modal-backdrop" id="uploadModal">
+    <div class="modal">
+      <h3>Upload ISO / Compressed Archive</h3>
+      <p style="font-size:12px; color:var(--text-muted);">Streams directly to S3 Intelligent-Tiering (Frequent Access) while computing linear SHA-256 and SHA-1 in a single pass.</p>
+      <div class="form-group">
+        <label>Target Object Key (Path in Bucket)</label>
+        <input type="text" id="uploadKeyInput" placeholder="isos/ubuntu/ubuntu-24.04-custom.iso" />
+      </div>
+      <div class="form-group">
+        <label>Select File</label>
+        <input type="file" id="uploadFileInput" onchange="onFileSelected(this)" />
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn" onclick="closeModals()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitUpload()">Upload &amp; Compute Hashes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New In-App Access Grant Modal -->
+  <div class="modal-backdrop" id="grantModal">
+    <div class="modal">
+      <h3>Create / Update In-App Access Grant</h3>
+      <div class="form-group">
+        <label>Subject Type</label>
+        <select id="grantSubjectType">
+          <option value="OIDC_GROUP">OIDC_GROUP (SSO IdP Group Claim)</option>
+          <option value="APP_GROUP">APP_GROUP (In-App Managed Group)</option>
+          <option value="SSO_USER">SSO_USER (Individual User Email)</option>
+          <option value="GITHUB_WORKFLOW">GITHUB_WORKFLOW (GitHub OIDC Claim Pattern)</option>
+          <option value="SERVICE_ACCOUNT">SERVICE_ACCOUNT (Machine Account ID)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Subject Identifier / Claim Pattern</label>
+        <input type="text" id="grantSubjectId" placeholder="e.g. release-engineering OR repo:my-org/iso-builder:ref:refs/heads/main" />
+      </div>
+      <div class="form-group">
+        <label>Allowed Bucket Prefixes (comma-separated, * for entire bucket)</label>
+        <input type="text" id="grantPrefixes" value="*" placeholder="linux/*, isos/*" />
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" id="grantDesc" placeholder="Allow CI workflow to upload nightly ISOs" />
+      </div>
+      <div class="checkbox-row">
+        <label><input type="checkbox" id="grantRead" checked /> Read</label>
+        <label><input type="checkbox" id="grantUpload" checked /> Upload</label>
+        <label><input type="checkbox" id="grantDelete" /> Delete</label>
+        <label><input type="checkbox" id="grantAdmin" /> Admin</label>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn" onclick="closeModals()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitGrant()">Save Access Grant</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New App-Managed Group Modal -->
+  <div class="modal-backdrop" id="groupModal">
+    <div class="modal">
+      <h3>Create / Update App-Managed Group</h3>
+      <div class="form-group">
+        <label>Group Name</label>
+        <input type="text" id="groupName" placeholder="e.g. iso-curators" />
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" id="groupDesc" placeholder="Engineers authorized to upload and prune ISOs" />
+      </div>
+      <div class="form-group">
+        <label>Member SSO Emails (comma-separated)</label>
+        <input type="text" id="groupMembers" placeholder="alice@example.com, bob@example.com" />
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn" onclick="closeModals()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAppGroup()">Save App Group</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Service Account Modal -->
+  <div class="modal-backdrop" id="serviceAccountModal">
+    <div class="modal">
+      <h3>Create Service Account</h3>
+      <div class="form-group">
+        <label>Service Account ID</label>
+        <input type="text" id="saId" placeholder="e.g. svc-nexus-east" />
+      </div>
+      <div class="form-group">
+        <label>Display Name / Description</label>
+        <input type="text" id="saDesc" placeholder="Sonatype Nexus Raw Proxy Account" />
+      </div>
+      <div class="form-group">
+        <label>Allowed Prefixes (comma-separated)</label>
+        <input type="text" id="saPrefixes" value="*" />
+      </div>
+      <div class="checkbox-row">
+        <label><input type="checkbox" id="saRead" checked /> Read / Proxy</label>
+        <label><input type="checkbox" id="saUpload" /> Upload</label>
+        <label><input type="checkbox" id="saDelete" /> Delete</label>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn" onclick="closeModals()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitServiceAccount()">Generate Credentials</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    let currentPrefix = "";
+    let currentMe = null;
+    let currentDrawerItem = null;
+
+    async function init() {
+      await refreshMe();
+      await loadDirectory("");
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.style.display = "block";
+      setTimeout(() => { t.style.display = "none"; }, 3000);
+    }
+
+    function copyText(txt) {
+      navigator.clipboard.writeText(txt);
+      showToast("Copied to clipboard!");
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return "0 B";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      const i = Math.floor(Math.log(bytes) / Math.log(1024));
+      return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 2) + " " + units[i];
+    }
+
+    function shortHash(h) {
+      if (!h) return "--";
+      return h.substring(0, 12) + "…";
+    }
+
+    async function refreshMe() {
+      const res = await fetch(`/api/v1/me?prefix=${encodeURIComponent(currentPrefix)}`);
+      if (!res.ok) return;
+      currentMe = await res.json();
+      document.getElementById("bucketPill").textContent = `s3://${currentMe.bucket}`;
+
+      const perm = currentMe.effective_permissions || {};
+      const badgesEl = document.getElementById("effectivePermBadges");
+      badgesEl.innerHTML = `
+        <span class="perm-badge ${perm.can_read ? 'perm-on' : 'perm-off'}">Read</span>
+        <span class="perm-badge ${perm.can_upload ? 'perm-on' : 'perm-off'}">Upload</span>
+        <span class="perm-badge ${perm.can_delete ? 'perm-on' : 'perm-off'}">Delete</span>
+        ${perm.is_admin ? '<span class="perm-badge perm-on">Admin</span>' : ''}
+      `;
+      document.getElementById("uploadBtn").style.display = perm.can_upload ? "inline-flex" : "none";
+    }
+
+    async function switchPersona(persona) {
+      const presets = {
+        admin:   { email: "admin@example.com", name: "Alice Admin", oidc_groups: ["platform-admins"] },
+        releng:  { email: "rel-eng@example.com", name: "Bob ReleaseEng", oidc_groups: ["release-engineering"] },
+        curator: { email: "curator@example.com", name: "Carol Curator", oidc_groups: [] },
+        viewer:  { email: "viewer@example.com", name: "Dan Viewer (Read-Only)", oidc_groups: ["employees"] }
+      };
+      const body = presets[persona] || presets.viewer;
+      await fetch("/api/v1/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      await refreshMe();
+      await loadDirectory(currentPrefix);
+      showToast(`Switched SSO session to ${body.email}`);
+    }
+
+    function switchTab(tab) {
+      document.getElementById("viewBrowser").style.display = tab === "browser" ? "block" : "none";
+      document.getElementById("viewPermissions").style.display = tab === "permissions" ? "block" : "none";
+      document.getElementById("viewServiceAccounts").style.display = tab === "service-accounts" ? "block" : "none";
+
+      document.getElementById("tabBrowserBtn").classList.toggle("active", tab === "browser");
+      document.getElementById("tabPermissionsBtn").classList.toggle("active", tab === "permissions");
+      document.getElementById("tabServiceAccountsBtn").classList.toggle("active", tab === "service-accounts");
+
+      if (tab === "permissions") {
+        loadGrants();
+        loadAppGroups();
+      } else if (tab === "service-accounts") {
+        loadServiceAccounts();
+      } else {
+        loadDirectory(currentPrefix);
+      }
+    }
+
+    function renderBreadcrumbs(prefix) {
+      const container = document.getElementById("breadcrumbs");
+      const parts = prefix.split("/").filter(Boolean);
+      let html = `<span class="crumb" onclick="loadDirectory('')">root</span>`;
+      let acc = "";
+      for (const p of parts) {
+        acc += p + "/";
+        html += `<span class="crumb-sep">/</span><span class="crumb" onclick="loadDirectory('${acc}')">${p}</span>`;
+      }
+      container.innerHTML = html;
+      document.getElementById("rawAutoindexLink").href = "/raw/" + prefix;
+    }
+
+    async function loadDirectory(prefix) {
+      currentPrefix = prefix || "";
+      await refreshMe();
+      renderBreadcrumbs(currentPrefix);
+
+      const tier = document.getElementById("tierFilter").value;
+      const res = await fetch(`/api/v1/browse?prefix=${encodeURIComponent(currentPrefix)}&tier=${encodeURIComponent(tier)}`);
+      const data = await res.json();
+      renderEntries(data.entries || [], data.effective_permissions || {});
+    }
+
+    async function runSearch() {
+      const q = document.getElementById("searchInput").value.trim();
+      const tier = document.getElementById("tierFilter").value;
+      if (!q) {
+        return loadDirectory(currentPrefix);
+      }
+      const res = await fetch(`/api/v1/search?q=${encodeURIComponent(q)}&tier=${encodeURIComponent(tier)}`);
+      const data = await res.json();
+      const entries = (data.results || []).map(r => ({
+        type: "FILE",
+        name: r.key,
+        key: r.key,
+        size: r.size,
+        intelligent_tier: r.intelligent_tier,
+        tier_label: r.tier_label,
+        restore_status: r.restore_status,
+        sha256: r.sha256,
+        sha1: r.sha1,
+        last_accessed_at: r.last_accessed_at
+      }));
+      renderEntries(entries, currentMe ? currentMe.effective_permissions : {});
+    }
+
+    function clearSearch() {
+      document.getElementById("searchInput").value = "";
+      loadDirectory(currentPrefix);
+    }
+
+    function renderEntries(entries, perm) {
+      const tbody = document.getElementById("browserTableBody");
+      if (!entries.length) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:32px;">No artifacts found in this prefix.</td></tr>`;
+        return;
+      }
+
+      let rows = "";
+      if (currentPrefix !== "") {
+        const parts = currentPrefix.split("/").filter(Boolean);
+        parts.pop();
+        const parent = parts.length ? parts.join("/") + "/" : "";
+        rows += `
+          <tr>
+            <td colspan="7">
+              <span style="cursor:pointer; color:var(--accent); font-family:var(--font-mono);" onclick="loadDirectory('${parent}')">&#11013; .. (Parent Directory)</span>
+            </td>
+          </tr>`;
+      }
+
+      for (const e of entries) {
+        if (e.type === "DIR") {
+          rows += `
+            <tr>
+              <td>
+                <span style="cursor:pointer; color:var(--accent); font-weight:600; font-family:var(--font-mono);" onclick="loadDirectory('${e.key}')">
+                  &#128193; ${e.name}
+                </span>
+              </td>
+              <td class="mono">--</td>
+              <td><span style="color:var(--text-dim); font-size:12px;">Directory Prefix</span></td>
+              <td class="mono">--</td>
+              <td class="mono">--</td>
+              <td class="mono">--</td>
+              <td>
+                <a class="btn btn-sm" href="/raw/${e.key}" target="_blank">Nexus Index</a>
+              </td>
+            </tr>`;
+        } else {
+          const isArchived = (e.intelligent_tier === "AA" || e.intelligent_tier === "DAA") && e.restore_status !== "RESTORED";
+          const lastAcc = e.last_accessed_at ? new Date(e.last_accessed_at).toISOString().replace("T", " ").substring(0, 19) : "--";
+          rows += `
+            <tr>
+              <td>
+                <span style="cursor:pointer; font-weight:600; color:var(--text-main);" onclick="openItemDrawer('${e.key}')">
+                  &#128191; ${e.name}
+                </span>
+              </td>
+              <td class="mono">${formatBytes(e.size)}</td>
+              <td>
+                <span class="badge tier-${e.intelligent_tier}" title="${e.tier_label || e.intelligent_tier}">
+                  ${e.tier_label || e.intelligent_tier}
+                </span>
+              </td>
+              <td>
+                <span class="hash-cell">
+                  <span title="${e.sha256}">${shortHash(e.sha256)}</span>
+                  <button class="copy-btn" onclick="copyText('${e.sha256}')">Copy</button>
+                </span>
+              </td>
+              <td>
+                <span class="hash-cell">
+                  <span title="${e.sha1}">${shortHash(e.sha1)}</span>
+                  <button class="copy-btn" onclick="copyText('${e.sha1}')">Copy</button>
+                </span>
+              </td>
+              <td class="mono" style="color:var(--text-muted);">${lastAcc}</td>
+              <td>
+                <div style="display:flex; gap:6px;">
+                  ${isArchived
+                    ? `<button class="btn btn-sm btn-primary" onclick="openItemDrawer('${e.key}')">Restore</button>`
+                    : `<a class="btn btn-sm" href="/api/v1/objects/${e.key}/download">Download</a>`
+                  }
+                  <button class="btn btn-sm" onclick="openItemDrawer('${e.key}')">Hashes &amp; Logs</button>
+                  ${perm.can_delete ? `<button class="btn btn-sm btn-danger" onclick="deleteObject('${e.key}')">Delete</button>` : ''}
+                </div>
+              </td>
+            </tr>`;
+        }
+      }
+      tbody.innerHTML = rows;
+    }
+
+    async function openItemDrawer(key) {
+      const res = await fetch(`/api/v1/objects/${key}/meta`);
+      if (!res.ok) {
+        showToast("Failed to load object metadata");
+        return;
+      }
+      const meta = await res.json();
+      currentDrawerItem = meta;
+
+      document.getElementById("drawerFilename").textContent = meta.key;
+      document.getElementById("drawerSha256").textContent = meta.sha256;
+      document.getElementById("drawerSha1").textContent = meta.sha1;
+      document.getElementById("drawerSha256Link").href = `/raw/${meta.key}.sha256`;
+      document.getElementById("drawerSha1Link").href = `/raw/${meta.key}.sha1`;
+      document.getElementById("drawerRawUrl").textContent = `${window.location.origin}/raw/${meta.key}`;
+
+      const isArchived = (meta.intelligent_tier === "AA" || meta.intelligent_tier === "DAA") && meta.restore_status !== "RESTORED";
+      document.getElementById("drawerRestoreBtn").style.display = isArchived ? "inline-flex" : "none";
+      document.getElementById("drawerTierNote").textContent = isArchived
+        ? "Object is in an asynchronous Archive tier. Click Restore to initiate s3:RestoreObject back to Frequent Access (FA)."
+        : "Object is in a synchronous millisecond-latency tier. Any download automatically resets its tier to Frequent Access (FA).";
+
+      document.getElementById("drawerMetaGrid").innerHTML = `
+        <div class="meta-item"><label>Size</label><div class="mono">${formatBytes(meta.size)} (${meta.size.toLocaleString()} B)</div></div>
+        <div class="meta-item"><label>Intelligent-Tiering</label><div><span class="badge tier-${meta.intelligent_tier}">${meta.tier_label}</span></div></div>
+        <div class="meta-item"><label>Uploaded By</label><div class="mono">${meta.uploaded_by || 'system'}</div></div>
+        <div class="meta-item"><label>Total Downloads</label><div class="mono">${meta.download_count || 0}</div></div>
+        <div class="meta-item"><label>Last Accessed</label><div class="mono">${new Date(meta.last_accessed_at).toISOString().replace('T',' ').substring(0,19)} UTC</div></div>
+        <div class="meta-item"><label>Content-Type</label><div class="mono">${meta.content_type}</div></div>
+      `;
+
+      document.getElementById("itemDrawerBackdrop").classList.add("open");
+      await loadObjectLogs(meta.key);
+    }
+
+    function closeDrawer() {
+      document.getElementById("itemDrawerBackdrop").classList.remove("open");
+    }
+
+    async function loadObjectLogs(key) {
+      const action = document.getElementById("logActionFilter").value;
+      const actor = document.getElementById("logActorFilter").value;
+      const res = await fetch(`/api/v1/objects/${key}/logs?action=${encodeURIComponent(action)}&actor=${encodeURIComponent(actor)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const logs = data.logs || [];
+      const tbody = document.getElementById("drawerLogsBody");
+      if (!logs.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">No access log events matching filter.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = logs.map(l => `
+        <tr>
+          <td class="mono">${new Date(l.timestamp).toISOString().replace('T', ' ').substring(0, 19)}</td>
+          <td class="mono" style="color:var(--accent);">${l.principal_id}</td>
+          <td><span class="perm-badge perm-off">${l.principal_type}</span></td>
+          <td><span class="perm-badge ${l.action === 'DELETE' ? 'btn-danger' : 'perm-on'}">${l.action}</span></td>
+          <td class="mono">${l.client_ip}</td>
+          <td class="mono">${formatBytes(l.bytes_sent)} (${l.status_code})</td>
+        </tr>
+      `).join("");
+    }
+
+    async function restoreCurrentObject() {
+      if (!currentDrawerItem) return;
+      const res = await fetch(`/api/v1/objects/${currentDrawerItem.key}/restore`, { method: "POST" });
+      if (res.ok) {
+        showToast("Object restored to Frequent Access (FA)!");
+        await openItemDrawer(currentDrawerItem.key);
+        await loadDirectory(currentPrefix);
+      }
+    }
+
+    async function simulateTierChange(tier) {
+      if (!tier || !currentDrawerItem) return;
+      const res = await fetch(`/api/v1/objects/${currentDrawerItem.key}/tier`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intelligent_tier: tier, restore_status: "NONE" })
+      });
+      document.getElementById("drawerSimulateTier").value = "";
+      if (res.ok) {
+        showToast(`Transitioned ${currentDrawerItem.filename} to ${tier}`);
+        await openItemDrawer(currentDrawerItem.key);
+        await loadDirectory(currentPrefix);
+      } else {
+        const err = await res.json();
+        showToast(err.error || "Permission denied");
+      }
+    }
+
+    function openUploadModal() {
+      document.getElementById("uploadKeyInput").value = currentPrefix;
+      document.getElementById("uploadModal").classList.add("open");
+    }
+
+    function onFileSelected(input) {
+      if (input.files && input.files[0]) {
+        const file = input.files[0];
+        const keyInput = document.getElementById("uploadKeyInput");
+        if (!keyInput.value || keyInput.value.endsWith("/")) {
+          keyInput.value = (keyInput.value || currentPrefix) + file.name;
+        }
+      }
+    }
+
+    async function submitUpload() {
+      const key = document.getElementById("uploadKeyInput").value.trim().replace(/^\/+/, "");
+      const fileInput = document.getElementById("uploadFileInput");
+      if (!key || !fileInput.files.length) {
+        showToast("Please specify a target key and choose a file");
+        return;
+      }
+      const formData = new FormData();
+      formData.append("file", fileInput.files[0]);
+
+      const res = await fetch(`/api/v1/objects/${key}`, {
+        method: "POST",
+        body: formData
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        showToast(err.error || "Upload failed");
+        return;
+      }
+      closeModals();
+      showToast("Uploaded & computed linear SHA-256 + SHA-1!");
+      await loadDirectory(currentPrefix);
+    }
+
+    async function deleteObject(key) {
+      if (!confirm(`Delete object "${key}" from S3?`)) return;
+      const res = await fetch(`/api/v1/objects/${key}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json();
+        showToast(err.error || "Delete failed");
+        return;
+      }
+      showToast(`Deleted ${key}`);
+      await loadDirectory(currentPrefix);
+    }
+
+    // --- Admin: In-App Access Grants & App Groups ---
+
+    async function loadGrants() {
+      const res = await fetch("/api/v1/admin/grants");
+      const data = await res.json();
+      const tbody = document.getElementById("grantsTableBody");
+      tbody.innerHTML = (data.grants || []).map(g => `
+        <tr>
+          <td><span class="perm-badge perm-off">${g.subject_type}</span></td>
+          <td class="mono" style="font-weight:600; color:var(--accent);">${g.subject_id}</td>
+          <td class="mono">${(g.prefixes || ["*"]).join(", ")}</td>
+          <td><span class="perm-badge ${g.can_read ? 'perm-on' : 'perm-off'}">${g.can_read ? 'YES' : 'NO'}</span></td>
+          <td><span class="perm-badge ${g.can_upload ? 'perm-on' : 'perm-off'}">${g.can_upload ? 'YES' : 'NO'}</span></td>
+          <td><span class="perm-badge ${g.can_delete ? 'perm-on' : 'perm-off'}">${g.can_delete ? 'YES' : 'NO'}</span></td>
+          <td><span class="perm-badge ${g.is_admin ? 'perm-on' : 'perm-off'}">${g.is_admin ? 'YES' : 'NO'}</span></td>
+          <td class="mono">${g.updated_by || 'system'}</td>
+          <td>
+            ${g.id !== 'builtin-readonly' ? `<button class="btn btn-sm btn-danger" onclick="deleteGrant('${g.id}')">Revoke</button>` : ''}
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function openGrantModal() {
+      document.getElementById("grantModal").classList.add("open");
+    }
+
+    async function submitGrant() {
+      const prefixes = document.getElementById("grantPrefixes").value.split(",").map(s => s.trim()).filter(Boolean);
+      const payload = {
+        subject_type: document.getElementById("grantSubjectType").value,
+        subject_id: document.getElementById("grantSubjectId").value.trim(),
+        description: document.getElementById("grantDesc").value.trim(),
+        prefixes: prefixes.length ? prefixes : ["*"],
+        can_read: document.getElementById("grantRead").checked,
+        can_upload: document.getElementById("grantUpload").checked,
+        can_delete: document.getElementById("grantDelete").checked,
+        is_admin: document.getElementById("grantAdmin").checked
+      };
+      const res = await fetch("/api/v1/admin/grants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        showToast(err.error || "Failed to save grant");
+        return;
+      }
+      closeModals();
+      showToast("Saved In-App Access Grant");
+      await loadGrants();
+      await refreshMe();
+    }
+
+    async function deleteGrant(id) {
+      const res = await fetch(`/api/v1/admin/grants/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json();
+        showToast(err.error || "Failed to delete grant");
+        return;
+      }
+      showToast("Access Grant revoked");
+      await loadGrants();
+      await refreshMe();
+    }
+
+    async function loadAppGroups() {
+      const res = await fetch("/api/v1/admin/groups");
+      const data = await res.json();
+      const tbody = document.getElementById("groupsTableBody");
+      tbody.innerHTML = (data.groups || []).map(g => `
+        <tr>
+          <td class="mono" style="font-weight:700; color:var(--accent);">${g.name}</td>
+          <td>${g.description || ''}</td>
+          <td class="mono">${(g.members || []).join(", ")}</td>
+          <td class="mono">${new Date(g.updated_at).toISOString().substring(0, 19)}</td>
+          <td><button class="btn btn-sm btn-danger" onclick="deleteAppGroup('${g.name}')">Delete</button></td>
+        </tr>
+      `).join("");
+    }
+
+    function openGroupModal() {
+      document.getElementById("groupModal").classList.add("open");
+    }
+
+    async function submitAppGroup() {
+      const members = document.getElementById("groupMembers").value.split(",").map(s => s.trim()).filter(Boolean);
+      const payload = {
+        name: document.getElementById("groupName").value.trim(),
+        description: document.getElementById("groupDesc").value.trim(),
+        members: members
+      };
+      const res = await fetch("/api/v1/admin/groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        showToast(err.error || "Failed to save group");
+        return;
+      }
+      closeModals();
+      showToast("Saved App-Managed Group");
+      await loadAppGroups();
+      await refreshMe();
+    }
+
+    async function deleteAppGroup(name) {
+      await fetch(`/api/v1/admin/groups/${name}`, { method: "DELETE" });
+      await loadAppGroups();
+    }
+
+    // --- Service Accounts & GitHub OIDC JWT ---
+
+    async function loadServiceAccounts() {
+      const res = await fetch("/api/v1/admin/service-accounts");
+      const data = await res.json();
+      const tbody = document.getElementById("serviceAccountsTableBody");
+      tbody.innerHTML = (data.service_accounts || []).map(sa => `
+        <tr>
+          <td class="mono" style="font-weight:700; color:var(--accent);">${sa.account_id}</td>
+          <td><div>${sa.name}</div><div style="font-size:11.5px; color:var(--text-muted);">${sa.description || ''}</div></td>
+          <td class="mono">${sa.created_by}</td>
+          <td class="mono">${sa.last_used_at ? new Date(sa.last_used_at).toISOString().replace('T',' ').substring(0,19) : 'Never'}</td>
+          <td><button class="btn btn-sm btn-danger" onclick="deleteServiceAccount('${sa.account_id}')">Revoke</button></td>
+        </tr>
+      `).join("");
+    }
+
+    function openServiceAccountModal() {
+      document.getElementById("serviceAccountModal").classList.add("open");
+    }
+
+    async function submitServiceAccount() {
+      const prefixes = document.getElementById("saPrefixes").value.split(",").map(s => s.trim()).filter(Boolean);
+      const payload = {
+        account_id: document.getElementById("saId").value.trim(),
+        name: document.getElementById("saId").value.trim(),
+        description: document.getElementById("saDesc").value.trim(),
+        prefixes: prefixes.length ? prefixes : ["*"],
+        can_read: document.getElementById("saRead").checked,
+        can_upload: document.getElementById("saUpload").checked,
+        can_delete: document.getElementById("saDelete").checked
+      };
+      const res = await fetch("/api/v1/admin/service-accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        showToast(err.error || "Failed to create service account");
+        return;
+      }
+      const data = await res.json();
+      closeModals();
+      const banner = document.getElementById("newSecretBanner");
+      banner.style.display = "block";
+      banner.innerHTML = `
+        <h4 style="color:var(--accent); margin-bottom:6px;">Service Account Created — Save Secret Now (Shown Once)</h4>
+        <div class="mono" style="margin-bottom:4px;"><strong>Username:</strong> ${data.basic_auth_user}</div>
+        <div class="mono" style="margin-bottom:4px;"><strong>Secret Key:</strong> ${data.secret}</div>
+        <div class="mono"><strong>Sonatype Nexus Raw Proxy URL:</strong> ${window.location.origin}/raw/</div>
+      `;
+      await loadServiceAccounts();
+    }
+
+    async function deleteServiceAccount(id) {
+      await fetch(`/api/v1/admin/service-accounts/${id}`, { method: "DELETE" });
+      await loadServiceAccounts();
+    }
+
+    async function generateTestGitHubJWT() {
+      const res = await fetch("/api/v1/auth/github-test-jwt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repository: "my-org/iso-builder", ref: "refs/heads/main", environment: "production" })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        showToast(err.error || "Admin permission required");
+        return;
+      }
+      const data = await res.json();
+      const box = document.getElementById("githubJwtOutput");
+      box.style.display = "block";
+      box.innerHTML = `
+        <div class="hash-box">
+          <div>
+            <div style="font-size:11px; color:var(--text-muted);">Signed GitHub OIDC JWT (${data.subject})</div>
+            <div>${data.jwt}</div>
+          </div>
+          <button class="btn btn-sm" onclick="copyText('${data.jwt}')">Copy JWT</button>
+        </div>
+        <div class="hash-box">
+          <div>
+            <div style="font-size:11px; color:var(--text-muted);">Example GitHub Runner Upload Command over VPN</div>
+            <div>${data.curl_example}</div>
+          </div>
+          <button class="btn btn-sm" onclick="copyText('${data.curl_example.replace(/'/g, "\\'")}')">Copy curl</button>
+        </div>
+      `;
+    }
+
+    function closeModals() {
+      document.querySelectorAll(".modal-backdrop").forEach(m => m.classList.remove("open"));
+    }
+
+    init();
+  </script>
+</body>
+</html>
+
