@@ -183,7 +183,7 @@ resource "aws_iam_role_policy" "ecs_task_data_plane" {
 
 resource "aws_security_group" "alb_internal" {
   name        = "${local.name_prefix}-internal-alb-sg"
-  description = "Allow HTTPS/HTTP from Corporate VPN, Sonatype Nexus, and Self-Hosted GitHub Runners"
+  description = "Allow HTTPS/HTTP from Corporate VPN, HTML Raw Access, and Self-Hosted GitHub Runners"
   vpc_id      = local.vpc_id
 
   ingress {
@@ -247,7 +247,7 @@ resource "aws_lb" "internal" {
   security_groups    = [aws_security_group.alb_internal.id]
   subnets            = local.private_subnet_ids
 
-  # 1-hour idle timeout for streaming multi-GB ISOs over VPN / Sonatype Nexus
+  # 1-hour idle timeout for streaming multi-GB ISOs over VPN / HTML Raw Access
   idle_timeout = 3600
 
   tags = {
@@ -365,6 +365,11 @@ resource "aws_ecs_task_definition" "s3web" {
   memory                   = tostring(var.ecs_task_memory)
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "ARM64"
+  }
 
   container_definitions = jsonencode([
     {

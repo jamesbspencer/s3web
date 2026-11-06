@@ -22,8 +22,8 @@ func setupTestServer(t *testing.T) (*server.Server, *config.Config) {
 	cfg := config.Load()
 	cfg.LocalDataDir = tmpDir
 	cfg.BackendMode = "local"
-	cfg.BootstrapNexusAccountID = "svc-nexus-proxy"
-	cfg.BootstrapNexusAccountKey = "nexus-secret-123"
+	cfg.BootstrapNexusAccountID = "svc-raw-access"
+	cfg.BootstrapNexusAccountKey = "raw-secret-123"
 	cfg.BootstrapAdminEmail = "admin@example.com"
 	cfg.BootstrapAdminOIDCGroup = "platform-admins"
 
@@ -42,7 +42,7 @@ func setupTestServer(t *testing.T) (*server.Server, *config.Config) {
 	return srv, cfg
 }
 
-func TestNexusRawProxyAndVirtualChecksums(t *testing.T) {
+func TestHTMLRawAccessAndVirtualChecksums(t *testing.T) {
 	srv, cfg := setupTestServer(t)
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
@@ -61,7 +61,7 @@ func TestNexusRawProxyAndVirtualChecksums(t *testing.T) {
 		t.Fatalf("expected 401 for invalid Basic Auth, got %d", resp.StatusCode)
 	}
 
-	// 2. Valid Nexus Service Account HEAD request returns ETag, X-Checksum-Sha256, X-Checksum-Sha1, and X-Amz-Intelligent-Tier
+	// 2. Valid HTML Raw Access HEAD request returns ETag, X-Checksum-Sha256, X-Checksum-Sha1, and X-Amz-Intelligent-Tier
 	req, _ = http.NewRequest(http.MethodHead, ts.URL+"/raw/linux/ubuntu/24.04/ubuntu-24.04.1-live-server-amd64.iso", nil)
 	req.SetBasicAuth(cfg.BootstrapNexusAccountID, cfg.BootstrapNexusAccountKey)
 	resp, err = client.Do(req)

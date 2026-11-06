@@ -47,7 +47,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("[s3web] listening on %s (Web UI: %s | Nexus Raw Proxy: %s/raw/)", cfg.ListenAddr, cfg.BaseURL, cfg.BaseURL)
+		log.Printf("[s3web] listening on %s (Web UI: %s | HTML Raw Access: %s/raw/)", cfg.ListenAddr, cfg.BaseURL, cfg.BaseURL)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("[s3web] HTTP server error: %v", err)
 		}

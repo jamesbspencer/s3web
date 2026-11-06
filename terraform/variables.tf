@@ -61,7 +61,7 @@ variable "private_subnet_cidrs" {
 }
 
 variable "vpn_allowed_cidr_blocks" {
-  description = "Corporate / VPN CIDR blocks permitted to reach the Internal ALB on HTTPS :443 (e.g., VPN pool, Sonatype Nexus subnet, self-hosted GitHub runner subnet)."
+  description = "Corporate / VPN CIDR blocks permitted to reach the Internal ALB on HTTPS :443 (e.g., VPN pool, internal automation subnet, self-hosted CI runner subnet)."
   type        = list(string)
   default     = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 }
@@ -87,7 +87,7 @@ variable "transit_gateway_id" {
 # --- DNS & TLS ---
 
 variable "internal_domain_name" {
-  description = "Private Route 53 DNS hostname for s3web (used by browsers over VPN, Sonatype Nexus, and GitHub Actions OIDC audience)."
+  description = "Private Route 53 DNS hostname for s3web (used by browsers over VPN, HTML Raw Access, and CI OIDC audience)."
   type        = string
   default     = "s3web.internal.corp"
 }
@@ -213,9 +213,9 @@ variable "bootstrap_admin_oidc_group" {
 }
 
 variable "bootstrap_nexus_account_id" {
-  description = "Service Account ID created for Sonatype Nexus Raw Proxy."
+  description = "Default Service Account ID created for HTML Raw Access."
   type        = string
-  default     = "svc-nexus-proxy"
+  default     = "svc-raw-access"
 }
 
 variable "access_log_retention_days" {

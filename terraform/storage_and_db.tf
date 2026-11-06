@@ -30,6 +30,19 @@ resource "aws_kms_key" "s3web" {
           "kms:Decrypt"
         ]
         Resource = "*"
+      },
+      {
+        Sid       = "AllowCloudWatchLogsEncryption"
+        Effect    = "Allow"
+        Principal = { Service = "logs.${var.aws_region}.amazonaws.com" }
+        Action = [
+          "kms:Encrypt*",
+          "kms:Decrypt*",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:Describe*"
+        ]
+        Resource = "*"
       }
     ]
   })

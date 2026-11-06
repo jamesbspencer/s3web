@@ -53,13 +53,13 @@ output "s3web_internal_url" {
   value       = local.base_url
 }
 
-output "sonatype_nexus_raw_proxy_remote_url" {
-  description = "Remote Storage URL to configure in Sonatype Nexus Raw (Proxy) Repository."
+output "html_raw_access_url" {
+  description = "HTML Raw Access URL (/raw/)."
   value       = "${local.base_url}/raw/"
 }
 
 output "secrets_manager_arn" {
-  description = "ARN of the Secrets Manager secret storing session secret, admin password, OIDC secret, and Nexus service account credentials."
+  description = "ARN of the Secrets Manager secret storing session secret, admin password, OIDC secret, and default service account credentials."
   value       = aws_secretsmanager_secret.app_secrets.arn
 }
 
@@ -74,8 +74,8 @@ output "bootstrap_admin_password" {
   sensitive   = true
 }
 
-output "bootstrap_nexus_service_account_secret" {
-  description = "Generated default Sonatype Nexus service account secret (retrieve with: terraform output -raw bootstrap_nexus_service_account_secret)."
+output "bootstrap_service_account_secret" {
+  description = "Generated default HTML Raw Access service account secret."
   value       = "s3w_${random_password.nexus_service_account_secret.result}"
   sensitive   = true
 }

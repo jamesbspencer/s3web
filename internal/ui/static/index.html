@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>s3web — Private S3 Artifact Browser &amp; Sonatype Nexus Proxy</title>
+  <title>s3web — Private S3 Artifact Browser &amp; HTML Raw Access</title>
   <link rel="icon" href="/logo.png" />
   <style>
     :root {
@@ -192,6 +192,11 @@
       transition: background 0.15s;
     }
     .btn:hover { background: var(--bg-hover); }
+    .btn.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(56, 189, 248, 0.14);
+    }
     .btn-primary {
       background: var(--accent-hover);
       border-color: var(--accent);
@@ -283,6 +288,64 @@
       font-weight: 600;
     }
     .copy-btn:hover { text-decoration: underline; }
+
+    /* Tree View Styles */
+    .tree-cell {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .tree-indent {
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .tree-guide {
+      display: inline-block;
+      width: 20px;
+      height: 22px;
+      border-left: 1px dashed var(--border-subtle);
+      margin-left: 6px;
+      opacity: 0.65;
+    }
+    .tree-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-size: 11px;
+      background: rgba(148, 163, 184, 0.1);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      cursor: pointer;
+      user-select: none;
+      flex-shrink: 0;
+      transition: transform 0.12s ease, background 0.12s ease;
+    }
+    .tree-folder-row {
+      background: rgba(15, 23, 42, 0.45);
+    }
+    .tree-folder-row:hover td {
+      background: rgba(56, 189, 248, 0.08);
+    }
+    .tree-folder-label {
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 600;
+      font-family: var(--font-mono);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tree-folder-meta {
+      font-size: 11.5px;
+      color: var(--text-dim);
+      font-weight: 400;
+      margin-left: 6px;
+    }
 
     /* Slide-over Drawer */
     .drawer-backdrop {
@@ -395,6 +458,99 @@
       z-index: 200;
       box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     }
+
+    /* Intelligent-Tiering Hover Tooltip Popover */
+    .tier-hover-trigger {
+      cursor: help;
+    }
+    .tier-info-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      font-size: 10px;
+      font-weight: 700;
+      background: rgba(56, 189, 248, 0.18);
+      color: var(--accent);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      margin-left: 4px;
+      vertical-align: middle;
+    }
+    .tier-tooltip-popover {
+      position: fixed;
+      z-index: 300;
+      max-width: 390px;
+      background: #0f172a;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 12px 14px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+      color: var(--text-main);
+      font-size: 12px;
+      line-height: 1.45;
+      pointer-events: none;
+      display: none;
+    }
+    .tier-tooltip-popover .tt-title {
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--accent);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .tier-tooltip-popover .tt-row {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border-subtle);
+      color: #cbd5e1;
+      font-size: 11.5px;
+    }
+    .tier-tooltip-popover .tt-list {
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 11.5px;
+    }
+
+    /* Settings Category Sub-Tabs */
+    .settings-tabs {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .settings-tab {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      padding: 10px 16px;
+      border-radius: 8px 8px 0 0;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.15s ease;
+    }
+    .settings-tab:hover {
+      color: var(--text-main);
+      background: var(--bg-elevated);
+    }
+    .settings-tab.active {
+      color: var(--accent);
+      background: var(--bg-elevated);
+      border-color: var(--border-subtle);
+      border-bottom: 2px solid var(--accent);
+    }
   </style>
 </head>
 <body>
@@ -404,10 +560,13 @@
     <div class="brand">
       <img src="/logo.png" alt="Logo" class="brand-logo" />
       <div>
-        <div>s3web &mdash; S3 Artifact Repository</div>
-        <div style="font-size:11px; color:var(--text-muted); font-weight:400;">Private VPC (VPN Only) &bull; S3 Intelligent-Tiering &bull; Sonatype Nexus Proxy</div>
+        <div id="repoTitleText">s3web &mdash; S3 Artifact Repository</div>
+        <div style="font-size:11px; color:var(--text-muted); font-weight:400;">
+          Private VPC (VPN Only) &bull;
+          <span class="tier-hover-trigger" style="text-decoration:underline dotted var(--border-subtle);" onmouseenter="showTierTooltip(event, 'OVERVIEW')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">S3 Intelligent-Tiering<span class="tier-info-icon">?</span></span>
+          &bull; HTML Raw Access
+        </div>
       </div>
-      <span class="bucket-pill" id="bucketPill">s3://corp-iso-artifacts</span>
     </div>
 
     <div class="search-bar">
@@ -424,31 +583,33 @@
         <option value="curator">SSO: curator@example.com (App Group iso-curators: Upload+Delete)</option>
         <option value="viewer">SSO: viewer@example.com (Default Read-Only)</option>
       </select>
+      <button class="btn" id="tabSettingsBtn" onclick="switchTab('settings')" title="Settings" aria-label="Settings" style="padding:7px 9px;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
     </div>
   </header>
 
   <!-- View Switcher Tabs -->
   <nav class="nav-tabs">
     <button class="nav-tab active" id="tabBrowserBtn" onclick="switchTab('browser')">
-      <span>Artifact &amp; ISO Browser</span>
-    </button>
-    <button class="nav-tab" id="tabPermissionsBtn" onclick="switchTab('permissions')">
-      <span>In-App Permissions (Upload / Delete RBAC)</span>
-    </button>
-    <button class="nav-tab" id="tabServiceAccountsBtn" onclick="switchTab('service-accounts')">
-      <span>Service Accounts &amp; GitHub OIDC JWT</span>
+      <span>Artifact Browser</span>
     </button>
   </nav>
 
   <!-- Main Workspace -->
   <main class="main">
 
-    <!-- TAB 1: ARTIFACT & ISO BROWSER -->
+    <!-- TAB 1: ARTIFACT BROWSER -->
     <section id="viewBrowser">
       <div class="toolbar">
         <div class="breadcrumbs" id="breadcrumbs"></div>
         <div class="toolbar-actions">
-          <label style="font-size:12px; color:var(--text-muted);">Intelligent-Tiering Filter:</label>
+          <button class="btn btn-sm" onclick="expandAllTree()">Expand All</button>
+          <button class="btn btn-sm" onclick="collapseAllTree()">Collapse All</button>
+          <label class="tier-hover-trigger" style="font-size:12px; color:var(--text-muted);" onmouseenter="showTierTooltip(event, 'OVERVIEW')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">Intelligent-Tiering Filter:<span class="tier-info-icon">?</span></label>
           <select id="tierFilter" onchange="loadDirectory(currentPrefix)">
             <option value="">All Intelligent-Tiering Sub-Tiers</option>
             <option value="FA">Frequent Access (FA - Hot)</option>
@@ -457,7 +618,7 @@
             <option value="AA">Archive Access (AA - Async Restore)</option>
             <option value="DAA">Deep Archive Access (DAA - Async Restore)</option>
           </select>
-          <a class="btn" id="rawAutoindexLink" href="/raw/" target="_blank">Open /raw/ Nexus Index</a>
+          <a class="btn" id="rawAutoindexLink" href="/raw/" target="_blank">Open /raw/ HTML Index</a>
           <button class="btn" onclick="loadDirectory(currentPrefix)">Refresh</button>
           <button class="btn btn-primary" id="uploadBtn" onclick="openUploadModal()" style="display:none;">+ Upload ISO / Archive</button>
         </div>
@@ -469,112 +630,318 @@
             <tr>
               <th>Name</th>
               <th>Size</th>
-              <th>S3 Intelligent-Tiering</th>
-              <th>SHA-256 (Linear)</th>
-              <th>SHA-1 (Linear)</th>
+              <th>
+                <span class="tier-hover-trigger" onmouseenter="showTierTooltip(event, 'OVERVIEW')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">
+                  S3 Intelligent-Tiering <span class="tier-info-icon">?</span>
+                </span>
+              </th>
               <th>Last Accessed (UTC)</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="browserTableBody">
-            <tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:32px;">Loading artifacts...</td></tr>
+            <tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:32px;">Loading artifacts...</td></tr>
           </tbody>
         </table>
       </div>
     </section>
 
-    <!-- TAB 2: IN-APP PERMISSIONS & APP GROUPS -->
-    <section id="viewPermissions" style="display:none;">
+    <!-- SETTINGS VIEW (TABBED CATEGORIES) -->
+    <section id="viewSettings" style="display:none;">
       <div class="toolbar">
         <div>
-          <h3 style="font-size:15px;">In-App Upload &amp; Delete Permission Grants</h3>
-          <p style="font-size:12px; color:var(--text-muted);">All users default to Read-Only. Grant Upload, Delete, or Admin rights to OIDC Groups, In-App Groups, SSO Users, GitHub OIDC Workflows, or Service Accounts.</p>
+          <h3 style="font-size:15px;">Application Settings &amp; Administration</h3>
+          <p style="font-size:12px; color:var(--text-muted);">Manage S3 buckets and tree view preferences, in-app RBAC permissions, SSO providers, CI OIDC JWT issuers, service accounts, S3 Intelligent-Tiering lifecycle defaults, and HTML Raw Access &amp; admin security.</p>
         </div>
         <div class="toolbar-actions">
-          <button class="btn btn-primary" onclick="openGrantModal()">+ New In-App Access Grant</button>
-          <button class="btn" onclick="openGroupModal()">+ New App-Managed Group</button>
+          <button class="btn" onclick="switchTab('browser')">&larr; Back to Artifact Browser</button>
+          <span id="settingsSaveToolbarActions" style="display:inline-flex; gap:8px;">
+            <button class="btn" onclick="loadSettings()">Reset Changes</button>
+            <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+          </span>
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:24px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Subject Type</th>
-              <th>Subject Identifier / Claim Pattern</th>
-              <th>Allowed Bucket Prefixes</th>
-              <th>Read</th>
-              <th>Upload</th>
-              <th>Delete</th>
-              <th>Admin</th>
-              <th>Updated By</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="grantsTableBody"></tbody>
-        </table>
+      <!-- Settings Category Tabs -->
+      <div class="settings-tabs">
+        <button class="settings-tab active" id="settingsTabBtn-buckets" onclick="switchSettingsCategory('buckets')">
+          S3 Buckets &amp; Tree View
+        </button>
+        <button class="settings-tab" id="settingsTabBtn-permissions" onclick="switchSettingsCategory('permissions')">
+          In-App Permissions &amp; RBAC
+        </button>
+        <button class="settings-tab" id="settingsTabBtn-sso" onclick="switchSettingsCategory('sso')">
+          SSO Providers (OIDC)
+        </button>
+        <button class="settings-tab" id="settingsTabBtn-jwt" onclick="switchSettingsCategory('jwt')">
+          JWT Issuers (CI OIDC)
+        </button>
+        <button class="settings-tab" id="settingsTabBtn-service-accounts" onclick="switchSettingsCategory('service-accounts')">
+          Service Accounts
+        </button>
+        <button class="settings-tab" id="settingsTabBtn-storage" onclick="switchSettingsCategory('storage')">
+          Storage &amp; Lifecycle
+        </button>
+        <button class="settings-tab" id="settingsTabBtn-security" onclick="switchSettingsCategory('security')">
+          HTML Raw Access &amp; Security
+        </button>
       </div>
 
-      <div class="toolbar">
-        <div>
-          <h3 style="font-size:15px;">App-Managed Groups</h3>
-          <p style="font-size:12px; color:var(--text-muted);">Group SSO users directly inside s3web to grant Upload or Delete permissions without waiting on external IdP changes.</p>
-        </div>
-      </div>
-      <div class="card">
-        <table>
-          <thead>
-            <tr>
-              <th>Group Name</th>
-              <th>Description</th>
-              <th>SSO User Members</th>
-              <th>Updated At</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="groupsTableBody"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- TAB 3: SERVICE ACCOUNTS & GITHUB ACTIONS OIDC JWT -->
-    <section id="viewServiceAccounts" style="display:none;">
-      <div class="toolbar">
-        <div>
-          <h3 style="font-size:15px;">Service Accounts (Sonatype Nexus Proxy &amp; Automation)</h3>
-          <p style="font-size:12px; color:var(--text-muted);">Configure HTTP Basic Auth and Bearer tokens for Sonatype Nexus Raw Proxy repositories and internal scripts.</p>
-        </div>
-        <div class="toolbar-actions">
-          <button class="btn btn-primary" onclick="openServiceAccountModal()">+ Create Service Account</button>
-        </div>
-      </div>
-
-      <div id="newSecretBanner" class="card" style="display:none; padding:16px; margin-bottom:20px; border-color:var(--accent);"></div>
-
-      <div class="card" style="margin-bottom:24px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Account ID</th>
-              <th>Name &amp; Description</th>
-              <th>Created By</th>
-              <th>Last Used</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="serviceAccountsTableBody"></tbody>
-        </table>
-      </div>
-
-      <div class="card" style="padding:20px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <div>
-            <h3 style="font-size:15px;">GitHub Actions Workflow OIDC JWT Authentication</h3>
-            <p style="font-size:12px; color:var(--text-muted);">Workflows authenticate secretlessly via <code>Authorization: Bearer &lt;GitHub-OIDC-JWT&gt;</code> matched against in-app <code>GITHUB_WORKFLOW</code> Access Grants.</p>
+      <!-- CATEGORY 1: S3 BUCKETS & TREE VIEW -->
+      <div id="settingsPane-buckets">
+        <div class="card" style="padding:20px; margin-bottom:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+            <div>
+              <h4 style="font-size:14px; color:var(--accent);">Configured S3 Buckets (Top-Level Tree View Folders)</h4>
+              <p style="font-size:12px; color:var(--text-muted);">Each configured S3 bucket appears as a top-level folder using its Friendly Name in the Artifact Browser tree view. Click <strong>Save Settings</strong> after adding or editing buckets.</p>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="addBucketRow()">+ Add S3 Bucket</button>
           </div>
-          <button class="btn btn-primary" onclick="generateTestGitHubJWT()">Mint Test GitHub Workflow JWT</button>
+          <table>
+            <thead>
+              <tr>
+                <th>Friendly Name (Top-Level Folder in Tree View)</th>
+                <th>S3 Bucket Name</th>
+                <th>AWS Region</th>
+                <th style="width:100px;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="settingsBucketsTableBody"></tbody>
+          </table>
         </div>
-        <div id="githubJwtOutput" style="display:none; margin-top:12px;"></div>
+
+        <div class="card" style="padding:20px; display:flex; flex-direction:column; gap:14px; max-width:760px;">
+          <div>
+            <h4 style="font-size:14px; color:var(--accent);">Repository &amp; Tree View Preferences</h4>
+            <p style="font-size:12px; color:var(--text-muted);">Customize the Artifact Browser tree view and <code>/raw/</code> HTML Index behavior.</p>
+          </div>
+          <div class="form-group">
+            <label>Repository Display Title</label>
+            <input type="text" id="setRepoTitle" placeholder="s3web — S3 Artifact Repository" />
+          </div>
+          <div class="form-group">
+            <label>Default Tree View State on Load</label>
+            <select id="setDefaultTreeState">
+              <option value="expanded">Expanded (Show all nested folders &amp; artifacts)</option>
+              <option value="collapsed">Collapsed (Show top-level folders collapsed)</option>
+            </select>
+          </div>
+          <div class="checkbox-row" style="margin-top:4px;">
+            <label><input type="checkbox" id="setEnableAutoindex" checked /> Enable <code>/raw/</code> HTML Directory Index</label>
+            <label><input type="checkbox" id="setEnableSidecars" checked /> Enable Virtual <code>.sha256</code> &amp; <code>.sha1</code> Sidecars</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- CATEGORY 2: IN-APP PERMISSIONS & RBAC -->
+      <div id="settingsPane-permissions" style="display:none;">
+        <div class="toolbar">
+          <div>
+            <h4 style="font-size:14px; color:var(--accent);">In-App Upload &amp; Delete Permission Grants</h4>
+            <p style="font-size:12px; color:var(--text-muted);">All users default to Read-Only. Grant Upload, Delete, or Admin rights to OIDC Groups, In-App Groups, SSO Users, CI OIDC Workflows, or Service Accounts.</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-primary" onclick="openGrantModal()">+ New In-App Access Grant</button>
+            <button class="btn" onclick="openGroupModal()">+ New App-Managed Group</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Subject Type</th>
+                <th>Subject Identifier / Claim Pattern</th>
+                <th>Allowed Bucket Prefixes</th>
+                <th>Read</th>
+                <th>Upload</th>
+                <th>Delete</th>
+                <th>Admin</th>
+                <th>Updated By</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="grantsTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="toolbar">
+          <div>
+            <h4 style="font-size:14px; color:var(--accent);">App-Managed Groups</h4>
+            <p style="font-size:12px; color:var(--text-muted);">Group SSO users directly inside s3web to grant Upload or Delete permissions without waiting on external IdP changes.</p>
+          </div>
+        </div>
+        <div class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Group Name</th>
+                <th>Description</th>
+                <th>SSO User Members</th>
+                <th>Updated At</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="groupsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CATEGORY 3: SSO PROVIDERS (HUMAN OIDC) -->
+      <div id="settingsPane-sso" style="display:none;">
+        <div class="card" style="padding:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+            <div>
+              <h4 style="font-size:14px; color:var(--accent);">Configured SSO Identity Providers (Human OIDC)</h4>
+              <p style="font-size:12px; color:var(--text-muted);">Configure one or more OIDC SSO Identity Providers (e.g., Corporate Okta, Microsoft Entra ID, Keycloak). Human users default to Read-Only; Upload &amp; Delete rights are granted via <strong>In-App Permissions &amp; RBAC</strong>. Click <strong>Save Settings</strong> after adding or editing providers.</p>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="addSSOProviderRow()">+ Add SSO Provider</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:80px;">Enabled</th>
+                <th>Provider Name</th>
+                <th>OIDC Issuer URL</th>
+                <th>Client ID</th>
+                <th style="width:130px;">Groups Claim</th>
+                <th style="width:160px;">Admin Group</th>
+                <th style="width:90px;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="settingsSSOProvidersTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CATEGORY 4: JWT ISSUERS (CI / WORKLOAD OIDC) -->
+      <div id="settingsPane-jwt" style="display:none;">
+        <div class="card" style="padding:20px; margin-bottom:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+            <div>
+              <h4 style="font-size:14px; color:var(--accent);">Configured OIDC JWT Issuers (CI / CD &amp; Workload Federation)</h4>
+              <p style="font-size:12px; color:var(--text-muted);">Configure one or more trusted OIDC JWT issuers (e.g., GitHub Actions Cloud, GitHub Enterprise Server, GitLab CI, Kubernetes) for secretless <code>Authorization: Bearer &lt;JWT&gt;</code> authentication. Click <strong>Save Settings</strong> after adding or editing issuers.</p>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="addJWTProviderRow()">+ Add JWT Issuer</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:80px;">Enabled</th>
+                <th>Issuer Name</th>
+                <th>OIDC Issuer URL (<code>iss</code>)</th>
+                <th>Expected Audience (<code>aud</code>)</th>
+                <th style="width:170px;">Subject Claim Prefix</th>
+                <th style="width:90px;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="settingsJWTProvidersTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="card" style="padding:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:12px;">
+            <div>
+              <h4 style="font-size:14px; color:var(--accent);">Test CI Workflow OIDC JWT Generator</h4>
+              <p style="font-size:12px; color:var(--text-muted);">Mint a test signed OIDC JWT to verify secretless <code>Authorization: Bearer &lt;JWT&gt;</code> uploads against your <code>GITHUB_WORKFLOW</code> Access Grants.</p>
+            </div>
+            <button class="btn btn-primary" onclick="generateTestGitHubJWT()">Mint Test CI Workflow JWT</button>
+          </div>
+          <div id="githubJwtOutput" style="display:none; margin-top:12px;"></div>
+        </div>
+      </div>
+
+      <!-- CATEGORY 5: SERVICE ACCOUNTS -->
+      <div id="settingsPane-service-accounts" style="display:none;">
+        <div class="toolbar">
+          <div>
+            <h4 style="font-size:14px; color:var(--accent);">Service Accounts (HTML Raw Access &amp; Automation)</h4>
+            <p style="font-size:12px; color:var(--text-muted);">Configure HTTP Basic Auth and Bearer tokens for automated HTML Raw Access and internal scripts.</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-primary" onclick="openServiceAccountModal()">+ Create Service Account</button>
+          </div>
+        </div>
+
+        <div id="newSecretBanner" class="card" style="display:none; padding:16px; margin-bottom:20px; border-color:var(--accent);"></div>
+
+        <div class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Account ID</th>
+                <th>Name &amp; Description</th>
+                <th>Created By</th>
+                <th>Last Used</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="serviceAccountsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CATEGORY 6: STORAGE & LIFECYCLE -->
+      <div id="settingsPane-storage" style="display:none;">
+        <div class="card" style="padding:20px; display:flex; flex-direction:column; gap:14px; max-width:760px;">
+          <div>
+            <h4 style="font-size:14px; color:var(--accent);">S3 Intelligent-Tiering &amp; Access Log Retention</h4>
+            <p style="font-size:12px; color:var(--text-muted);">Control archive restoration defaults (<code>s3:RestoreObject</code>) and DynamoDB per-item log retention.</p>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div class="form-group">
+              <label>Default Archive Restore Duration (Days)</label>
+              <input type="number" id="setRestoreDays" min="1" max="30" value="7" />
+            </div>
+            <div class="form-group">
+              <label>Default Glacier Restore Speed</label>
+              <select id="setRestoreTier">
+                <option value="Standard">Standard (3–5 hours)</option>
+                <option value="Expedited">Expedited (1–5 minutes)</option>
+                <option value="Bulk">Bulk (5–12 hours)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Per-Item Access Log Retention (Days)</label>
+            <input type="number" id="setLogRetentionDays" min="1" max="3650" value="90" />
+          </div>
+          <div class="meta-grid" style="padding:12px; margin-top:4px;">
+            <div class="meta-item"><label>S3 Bucket (Intelligent-Tiering)</label><div class="mono" id="setInfoBucket">--</div></div>
+            <div class="meta-item"><label>DynamoDB Metadata Table</label><div class="mono" id="setInfoDynamo">--</div></div>
+            <div class="meta-item"><label>AWS Region / Mode</label><div class="mono" id="setInfoRegion">--</div></div>
+            <div class="meta-item"><label>SQS Event Queue</label><div class="mono" id="setInfoSqs" style="word-break:break-all; font-size:11px;">--</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CATEGORY 7: HTML RAW ACCESS & SECURITY -->
+      <div id="settingsPane-security" style="display:none;">
+        <div class="card" style="padding:20px; display:flex; flex-direction:column; gap:14px; max-width:760px;">
+          <div>
+            <h4 style="font-size:14px; color:var(--accent);">HTML Raw Access &amp; Admin Credentials</h4>
+            <p style="font-size:12px; color:var(--text-muted);">Direct <code>/raw/</code> endpoint details and bootstrap admin password management. Access control on <code>/raw/</code> is identical to the default UI (SSO session, OIDC JWT, or Service Account).</p>
+          </div>
+          <div class="hash-box" style="margin-top:0;">
+            <div>
+              <div style="font-size:11px; color:var(--text-muted);">HTML Raw Access Base URL</div>
+              <div id="setRawBaseUrl"></div>
+            </div>
+            <button class="btn btn-sm" onclick="copyText(document.getElementById('setRawBaseUrl').textContent)">Copy URL</button>
+          </div>
+          <div class="hash-box" style="margin-top:0;">
+            <div>
+              <div style="font-size:11px; color:var(--text-muted);">Default Service Account Username</div>
+              <div id="setRawAccountId">svc-raw-access</div>
+            </div>
+            <button class="btn btn-sm" onclick="copyText(document.getElementById('setRawAccountId').textContent)">Copy Username</button>
+          </div>
+          <div class="form-group" style="margin-top:4px;">
+            <label>Rotate Bootstrap Admin Password (leave blank to keep existing)</label>
+            <input type="password" id="setNewAdminPassword" placeholder="Enter new bootstrap admin password..." autocomplete="new-password" />
+          </div>
+          <div style="font-size:11.5px; color:var(--text-dim);" id="setLastUpdatedNote"></div>
+        </div>
       </div>
     </section>
 
@@ -614,7 +981,7 @@
 
       <!-- Full-File Linear Checksums -->
       <div>
-        <h4 style="font-size:13px; color:var(--text-muted); text-transform:uppercase;">Verified Full-File Linear Hashes &amp; Nexus Sidecars</h4>
+        <h4 style="font-size:13px; color:var(--text-muted); text-transform:uppercase;">Verified Full-File Linear Hashes &amp; Sidecars</h4>
         <div class="hash-box">
           <div>
             <div style="font-size:11px; color:var(--text-muted);">SHA-256</div>
@@ -637,7 +1004,7 @@
         </div>
         <div class="hash-box">
           <div>
-            <div style="font-size:11px; color:var(--text-muted);">Sonatype Nexus Raw Proxy URL</div>
+            <div style="font-size:11px; color:var(--text-muted);">HTML Raw Access URL</div>
             <div id="drawerRawUrl"></div>
           </div>
           <button class="btn btn-sm" onclick="copyText(document.getElementById('drawerRawUrl').textContent)">Copy URL</button>
@@ -683,6 +1050,10 @@
     <div class="modal">
       <h3>Upload ISO / Compressed Archive</h3>
       <p style="font-size:12px; color:var(--text-muted);">Streams directly to S3 Intelligent-Tiering (Frequent Access) while computing linear SHA-256 and SHA-1 in a single pass.</p>
+      <div class="form-group">
+        <label>Target S3 Bucket</label>
+        <select id="uploadBucketSelect"></select>
+      </div>
       <div class="form-group">
         <label>Target Object Key (Path in Bucket)</label>
         <input type="text" id="uploadKeyInput" placeholder="isos/ubuntu/ubuntu-24.04-custom.iso" />
@@ -766,18 +1137,18 @@
       <h3>Create Service Account</h3>
       <div class="form-group">
         <label>Service Account ID</label>
-        <input type="text" id="saId" placeholder="e.g. svc-nexus-east" />
+        <input type="text" id="saId" placeholder="e.g. svc-raw-automation" />
       </div>
       <div class="form-group">
         <label>Display Name / Description</label>
-        <input type="text" id="saDesc" placeholder="Sonatype Nexus Raw Proxy Account" />
+        <input type="text" id="saDesc" placeholder="HTML Raw Access &amp; Automation Account" />
       </div>
       <div class="form-group">
         <label>Allowed Prefixes (comma-separated)</label>
         <input type="text" id="saPrefixes" value="*" />
       </div>
       <div class="checkbox-row">
-        <label><input type="checkbox" id="saRead" checked /> Read / Proxy</label>
+        <label><input type="checkbox" id="saRead" checked /> Read</label>
         <label><input type="checkbox" id="saUpload" /> Upload</label>
         <label><input type="checkbox" id="saDelete" /> Delete</label>
       </div>
@@ -789,14 +1160,133 @@
   </div>
 
   <div class="toast" id="toast"></div>
+  <div class="tier-tooltip-popover" id="tierTooltipPopover"></div>
 
   <script>
     let currentPrefix = "";
     let currentMe = null;
     let currentDrawerItem = null;
+    let currentTreeFiles = [];
+    let configuredBuckets = [];
+    let allTreePrefixes = new Set();
+    const collapsedPrefixes = new Set();
+
+    const TIER_EXPLANATIONS = {
+      OVERVIEW: {
+        title: "Amazon S3 Intelligent-Tiering",
+        badge: "AUTO COST OPTIMIZATION",
+        summary: "Automatically moves artifacts between access tiers based on consecutive days without a download — with zero performance impact or retrieval fees on synchronous tiers.",
+        details: `
+          <div class="tt-list">
+            <div><strong style="color:#34d399;">FA (0–30d):</strong> Frequent Access — Hot tier, immediate millisecond downloads.</div>
+            <div><strong style="color:#38bdf8;">IA (30–90d):</strong> Infrequent Access — ~40% lower storage cost, instant millisecond downloads.</div>
+            <div><strong style="color:#a5b4fc;">AIA (90d+):</strong> Archive Instant Access — ~68% lower cost, instant millisecond downloads.</div>
+            <div><strong style="color:#fbbf24;">AA (90–180d+):</strong> Archive Access — Asynchronous Glacier tier; requires <code>RestoreObject</code> before download.</div>
+            <div><strong style="color:#d8b4fe;">DAA (180d+):</strong> Deep Archive Access — Up to 95% savings; requires async <code>RestoreObject</code> (up to 12h).</div>
+          </div>
+          <div class="tt-row">Any download on a synchronous tier (<strong>FA / IA / AIA</strong>) automatically resets the artifact back to <strong>Frequent Access (FA)</strong>.</div>
+        `
+      },
+      FA: {
+        title: "Frequent Access Tier (FA)",
+        badge: "HOT • 0–30 DAYS",
+        summary: "Default storage tier for newly uploaded or recently downloaded ISOs and archives.",
+        details: `
+          <div class="tt-row">
+            <div><strong>Inactivity Window:</strong> Accessed within the last 30 days</div>
+            <div><strong>Retrieval Latency:</strong> Milliseconds (synchronous streaming)</div>
+            <div><strong>Automatic Transition:</strong> Moves to <strong>Infrequent Access (IA)</strong> after 30 consecutive days without a download.</div>
+          </div>
+        `
+      },
+      IA: {
+        title: "Infrequent Access Tier (IA)",
+        badge: "WARM • 30–90 DAYS",
+        summary: "Objects not downloaded for 30 consecutive days automatically transition here (~40% lower storage cost than FA).",
+        details: `
+          <div class="tt-row">
+            <div><strong>Inactivity Window:</strong> 30 to 90 consecutive days without access</div>
+            <div><strong>Retrieval Latency:</strong> Milliseconds (instant download, no restore needed)</div>
+            <div><strong>On Download:</strong> Automatically promotes back to <strong>Frequent Access (FA)</strong>.</div>
+          </div>
+        `
+      },
+      AIA: {
+        title: "Archive Instant Access Tier (AIA)",
+        badge: "COOL • 90+ DAYS",
+        summary: "Objects not downloaded for 90 consecutive days automatically transition here (~68% lower storage cost than IA) while keeping instant access.",
+        details: `
+          <div class="tt-row">
+            <div><strong>Inactivity Window:</strong> 90+ consecutive days without access</div>
+            <div><strong>Retrieval Latency:</strong> Milliseconds (instant download, no restore needed)</div>
+            <div><strong>On Download:</strong> Automatically promotes back to <strong>Frequent Access (FA)</strong>.</div>
+          </div>
+        `
+      },
+      AA: {
+        title: "Archive Access Tier (AA)",
+        badge: "COLD ASYNC • 90–180+ DAYS",
+        summary: "Optional asynchronous Glacier-backed archive tier (~71% lower storage cost) for older release artifacts.",
+        details: `
+          <div class="tt-row">
+            <div><strong>Retrieval Behavior:</strong> Direct downloads are paused until restored</div>
+            <div><strong>How to Download:</strong> Click <strong>Restore</strong> to trigger <code>s3:RestoreObject</code> (typically 3–5 hours standard, or 1–5 min expedited). Once restored, it warms back to <strong>FA</strong>.</div>
+          </div>
+        `
+      },
+      DAA: {
+        title: "Deep Archive Access Tier (DAA)",
+        badge: "DEEP COLD ASYNC • 180+ DAYS",
+        summary: "Lowest-cost S3 storage tier (up to 95% storage savings) for long-term retention of legacy ISOs and archives.",
+        details: `
+          <div class="tt-row">
+            <div><strong>Retrieval Behavior:</strong> Requires asynchronous restoration before download</div>
+            <div><strong>How to Download:</strong> Click <strong>Restore</strong> to trigger <code>s3:RestoreObject</code> (completes within 12 hours). Once restored, the artifact warms back to <strong>FA</strong>.</div>
+          </div>
+        `
+      }
+    };
+
+    function showTierTooltip(evt, tierKey) {
+      const pop = document.getElementById("tierTooltipPopover");
+      const info = TIER_EXPLANATIONS[tierKey] || TIER_EXPLANATIONS.OVERVIEW;
+      pop.innerHTML = `
+        <div class="tt-title">
+          <span>${info.title}</span>
+          <span class="badge tier-${tierKey === 'OVERVIEW' ? 'IA' : tierKey}" style="font-size:10px; padding:1px 6px;">${info.badge}</span>
+        </div>
+        <div>${info.summary}</div>
+        ${info.details}
+      `;
+      pop.style.display = "block";
+      moveTierTooltip(evt);
+    }
+
+    function moveTierTooltip(evt) {
+      const pop = document.getElementById("tierTooltipPopover");
+      if (!pop || pop.style.display === "none") return;
+      const pad = 14;
+      const rect = pop.getBoundingClientRect();
+      let left = evt.clientX + pad;
+      let top = evt.clientY + pad;
+      if (left + rect.width > window.innerWidth - 12) {
+        left = Math.max(12, evt.clientX - rect.width - pad);
+      }
+      if (top + rect.height > window.innerHeight - 12) {
+        top = Math.max(12, evt.clientY - rect.height - pad);
+      }
+      pop.style.left = left + "px";
+      pop.style.top = top + "px";
+    }
+
+    function hideTierTooltip() {
+      const pop = document.getElementById("tierTooltipPopover");
+      if (pop) pop.style.display = "none";
+    }
 
     async function init() {
       await refreshMe();
+      await loadSettings();
       await loadDirectory("");
     }
 
@@ -828,7 +1318,6 @@
       const res = await fetch(`/api/v1/me?prefix=${encodeURIComponent(currentPrefix)}`);
       if (!res.ok) return;
       currentMe = await res.json();
-      document.getElementById("bucketPill").textContent = `s3://${currentMe.bucket}`;
 
       const perm = currentMe.effective_permissions || {};
       const badgesEl = document.getElementById("effectivePermBadges");
@@ -859,157 +1348,649 @@
       showToast(`Switched SSO session to ${body.email}`);
     }
 
-    function switchTab(tab) {
-      document.getElementById("viewBrowser").style.display = tab === "browser" ? "block" : "none";
-      document.getElementById("viewPermissions").style.display = tab === "permissions" ? "block" : "none";
-      document.getElementById("viewServiceAccounts").style.display = tab === "service-accounts" ? "block" : "none";
+    let currentSettingsCategory = "buckets";
+    let configuredSSOProviders = [];
+    let configuredJWTProviders = [];
 
-      document.getElementById("tabBrowserBtn").classList.toggle("active", tab === "browser");
-      document.getElementById("tabPermissionsBtn").classList.toggle("active", tab === "permissions");
-      document.getElementById("tabServiceAccountsBtn").classList.toggle("active", tab === "service-accounts");
-
-      if (tab === "permissions") {
+    function switchSettingsCategory(cat) {
+      currentSettingsCategory = cat || "buckets";
+      const categories = ["buckets", "permissions", "sso", "jwt", "service-accounts", "storage", "security"];
+      for (const c of categories) {
+        const pane = document.getElementById(`settingsPane-${c}`);
+        const btn = document.getElementById(`settingsTabBtn-${c}`);
+        if (pane) pane.style.display = (c === currentSettingsCategory) ? "block" : "none";
+        if (btn) btn.classList.toggle("active", c === currentSettingsCategory);
+      }
+      const saveActions = document.getElementById("settingsSaveToolbarActions");
+      if (saveActions) {
+        const modalManaged = (currentSettingsCategory === "permissions" || currentSettingsCategory === "service-accounts");
+        saveActions.style.display = modalManaged ? "none" : "inline-flex";
+      }
+      if (currentSettingsCategory === "permissions") {
         loadGrants();
         loadAppGroups();
-      } else if (tab === "service-accounts") {
+      } else if (currentSettingsCategory === "service-accounts") {
+        loadServiceAccounts();
+      }
+    }
+
+    function switchTab(tab) {
+      if (tab === "permissions" || tab === "service-accounts" || tab === "sso" || tab === "jwt") {
+        switchTab("settings");
+        switchSettingsCategory(tab);
+        return;
+      }
+      document.getElementById("viewBrowser").style.display = tab === "browser" ? "block" : "none";
+      document.getElementById("viewSettings").style.display = tab === "settings" ? "block" : "none";
+
+      document.getElementById("tabBrowserBtn").classList.toggle("active", tab === "browser");
+      document.getElementById("tabSettingsBtn").classList.toggle("active", tab === "settings");
+
+      if (tab === "settings") {
+        loadSettings();
+        loadGrants();
+        loadAppGroups();
         loadServiceAccounts();
       } else {
         loadDirectory(currentPrefix);
       }
     }
 
+    function renderBucketSettingsRows() {
+      const tbody = document.getElementById("settingsBucketsTableBody");
+      if (!tbody) return;
+      tbody.innerHTML = configuredBuckets.map((b, idx) => `
+        <tr>
+          <td>
+            <input type="text" class="bucket-friendly-input" data-idx="${idx}" value="${(b.friendly_name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Production ISOs" style="width:100%;" />
+          </td>
+          <td>
+            <input type="text" class="bucket-name-input mono" data-idx="${idx}" value="${(b.bucket_name || '').replace(/"/g, '&quot;')}" placeholder="e.g. corp-iso-artifacts" style="width:100%;" />
+          </td>
+          <td>
+            <input type="text" class="bucket-region-input mono" data-idx="${idx}" value="${(b.region || 'us-east-1').replace(/"/g, '&quot;')}" placeholder="us-east-1" style="width:100%;" />
+          </td>
+          <td>
+            ${configuredBuckets.length > 1
+              ? `<button class="btn btn-sm btn-danger" onclick="removeBucketRow(${idx})">Remove</button>`
+              : `<span style="font-size:11px; color:var(--text-dim);">Default</span>`
+            }
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function syncBucketInputsFromDOM() {
+      const friendlyEls = document.querySelectorAll(".bucket-friendly-input");
+      const nameEls = document.querySelectorAll(".bucket-name-input");
+      const regionEls = document.querySelectorAll(".bucket-region-input");
+      const updated = [];
+      for (let i = 0; i < nameEls.length; i++) {
+        const existing = configuredBuckets[i] || {};
+        updated.push({
+          id: existing.id || `bucket-${i + 1}`,
+          friendly_name: friendlyEls[i] ? friendlyEls[i].value.trim() : "",
+          bucket_name: nameEls[i] ? nameEls[i].value.trim() : "",
+          region: regionEls[i] ? regionEls[i].value.trim() : "us-east-1"
+        });
+      }
+      if (updated.length) {
+        configuredBuckets = updated;
+      }
+    }
+
+    function addBucketRow() {
+      syncBucketInputsFromDOM();
+      configuredBuckets.push({
+        id: `bucket-${Date.now()}`,
+        friendly_name: `New Artifact Bucket ${configuredBuckets.length + 1}`,
+        bucket_name: "",
+        region: "us-east-1"
+      });
+      renderBucketSettingsRows();
+    }
+
+    function removeBucketRow(idx) {
+      syncBucketInputsFromDOM();
+      if (configuredBuckets.length <= 1) return;
+      configuredBuckets.splice(idx, 1);
+      renderBucketSettingsRows();
+    }
+
+    function renderSSOProviderRows() {
+      const tbody = document.getElementById("settingsSSOProvidersTableBody");
+      if (!tbody) return;
+      tbody.innerHTML = configuredSSOProviders.map((p, idx) => `
+        <tr>
+          <td style="text-align:center;">
+            <input type="checkbox" class="sso-enabled-input" data-idx="${idx}" ${p.enabled ? "checked" : ""} />
+          </td>
+          <td>
+            <input type="text" class="sso-name-input" data-idx="${idx}" value="${(p.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Corporate Okta" style="width:100%;" />
+          </td>
+          <td>
+            <input type="text" class="sso-issuer-input mono" data-idx="${idx}" value="${(p.issuer_url || '').replace(/"/g, '&quot;')}" placeholder="https://idp.internal.corp/oauth2/default" style="width:100%;" />
+          </td>
+          <td>
+            <input type="text" class="sso-clientid-input mono" data-idx="${idx}" value="${(p.client_id || '').replace(/"/g, '&quot;')}" placeholder="s3web-internal" style="width:100%;" />
+          </td>
+          <td>
+            <input type="text" class="sso-groupsclaim-input mono" data-idx="${idx}" value="${(p.groups_claim || 'groups').replace(/"/g, '&quot;')}" placeholder="groups" style="width:100%;" />
+          </td>
+          <td>
+            <input type="text" class="sso-admingroup-input mono" data-idx="${idx}" value="${(p.admin_group || 'platform-admins').replace(/"/g, '&quot;')}" placeholder="platform-admins" style="width:100%;" />
+          </td>
+          <td>
+            ${configuredSSOProviders.length > 1
+              ? `<button class="btn btn-sm btn-danger" onclick="removeSSOProviderRow(${idx})">Remove</button>`
+              : `<span style="font-size:11px; color:var(--text-dim);">Primary</span>`
+            }
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function syncSSOProvidersFromDOM() {
+      const enabledEls = document.querySelectorAll(".sso-enabled-input");
+      const nameEls = document.querySelectorAll(".sso-name-input");
+      const issuerEls = document.querySelectorAll(".sso-issuer-input");
+      const clientIdEls = document.querySelectorAll(".sso-clientid-input");
+      const groupsClaimEls = document.querySelectorAll(".sso-groupsclaim-input");
+      const adminGroupEls = document.querySelectorAll(".sso-admingroup-input");
+      const updated = [];
+      for (let i = 0; i < nameEls.length; i++) {
+        const existing = configuredSSOProviders[i] || {};
+        updated.push({
+          id: existing.id || `sso-${i + 1}`,
+          enabled: enabledEls[i] ? enabledEls[i].checked : false,
+          name: nameEls[i] ? nameEls[i].value.trim() : "",
+          issuer_url: issuerEls[i] ? issuerEls[i].value.trim() : "",
+          client_id: clientIdEls[i] ? clientIdEls[i].value.trim() : "",
+          groups_claim: groupsClaimEls[i] ? groupsClaimEls[i].value.trim() : "groups",
+          admin_group: adminGroupEls[i] ? adminGroupEls[i].value.trim() : "platform-admins"
+        });
+      }
+      if (updated.length) {
+        configuredSSOProviders = updated;
+      }
+    }
+
+    function addSSOProviderRow() {
+      syncSSOProvidersFromDOM();
+      configuredSSOProviders.push({
+        id: `sso-${Date.now()}`,
+        enabled: true,
+        name: `SSO Provider ${configuredSSOProviders.length + 1}`,
+        issuer_url: "",
+        client_id: "",
+        groups_claim: "groups",
+        admin_group: "platform-admins"
+      });
+      renderSSOProviderRows();
+    }
+
+    function removeSSOProviderRow(idx) {
+      syncSSOProvidersFromDOM();
+      if (configuredSSOProviders.length <= 1) return;
+      configuredSSOProviders.splice(idx, 1);
+      renderSSOProviderRows();
+    }
+
+    function renderJWTProviderRows() {
+      const tbody = document.getElementById("settingsJWTProvidersTableBody");
+      if (!tbody) return;
+      tbody.innerHTML = configuredJWTProviders.map((j, idx) => `
+        <tr>
+          <td style="text-align:center;">
+            <input type="checkbox" class="jwt-enabled-input" data-idx="${idx}" ${j.enabled ? "checked" : ""} />
+          </td>
+          <td>
+            <input type="text" class="jwt-name-input" data-idx="${idx}" value="${(j.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. GitHub Actions OIDC" style="width:100%;" />
+          </td>
+          <td>
+            <input type="text" class="jwt-issuer-input mono" data-idx="${idx}" value="${(j.issuer_url || '').replace(/"/g, '&quot;')}" placeholder="https://token.actions.githubusercontent.com" style="width:100%;" />
+          </td>
+          <td>
+            <input type="text" class="jwt-audience-input mono" data-idx="${idx}" value="${(j.audience || '').replace(/"/g, '&quot;')}" placeholder="${window.location.origin}" style="width:100%;" />
+          </td>
+          <td>
+            <input type="text" class="jwt-subprefix-input mono" data-idx="${idx}" value="${(j.subject_prefix || 'repo:').replace(/"/g, '&quot;')}" placeholder="repo:" style="width:100%;" />
+          </td>
+          <td>
+            ${configuredJWTProviders.length > 1
+              ? `<button class="btn btn-sm btn-danger" onclick="removeJWTProviderRow(${idx})">Remove</button>`
+              : `<span style="font-size:11px; color:var(--text-dim);">Primary</span>`
+            }
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function syncJWTProvidersFromDOM() {
+      const enabledEls = document.querySelectorAll(".jwt-enabled-input");
+      const nameEls = document.querySelectorAll(".jwt-name-input");
+      const issuerEls = document.querySelectorAll(".jwt-issuer-input");
+      const audEls = document.querySelectorAll(".jwt-audience-input");
+      const subPrefixEls = document.querySelectorAll(".jwt-subprefix-input");
+      const updated = [];
+      for (let i = 0; i < nameEls.length; i++) {
+        const existing = configuredJWTProviders[i] || {};
+        updated.push({
+          id: existing.id || `jwt-${i + 1}`,
+          enabled: enabledEls[i] ? enabledEls[i].checked : false,
+          name: nameEls[i] ? nameEls[i].value.trim() : "",
+          issuer_url: issuerEls[i] ? issuerEls[i].value.trim() : "",
+          audience: audEls[i] ? audEls[i].value.trim() : "",
+          subject_prefix: subPrefixEls[i] ? subPrefixEls[i].value.trim() : "repo:"
+        });
+      }
+      if (updated.length) {
+        configuredJWTProviders = updated;
+      }
+    }
+
+    function addJWTProviderRow() {
+      syncJWTProvidersFromDOM();
+      configuredJWTProviders.push({
+        id: `jwt-${Date.now()}`,
+        enabled: true,
+        name: `JWT Issuer ${configuredJWTProviders.length + 1}`,
+        issuer_url: "https://token.actions.githubusercontent.com",
+        audience: window.location.origin,
+        subject_prefix: "repo:"
+      });
+      renderJWTProviderRows();
+    }
+
+    function removeJWTProviderRow(idx) {
+      syncJWTProvidersFromDOM();
+      if (configuredJWTProviders.length <= 1) return;
+      configuredJWTProviders.splice(idx, 1);
+      renderJWTProviderRows();
+    }
+
+    async function loadSettings() {
+      const res = await fetch("/api/v1/settings");
+      if (!res.ok) return;
+      const s = await res.json();
+
+      if (s.repository_title) {
+        document.getElementById("repoTitleText").textContent = s.repository_title;
+        document.getElementById("setRepoTitle").value = s.repository_title;
+      }
+      configuredBuckets = (s.buckets && s.buckets.length)
+        ? s.buckets
+        : [{ id: "primary", friendly_name: "Primary Artifacts", bucket_name: s.s3_bucket || "corp-iso-artifacts", region: s.aws_region || "us-east-1" }];
+      renderBucketSettingsRows();
+
+      configuredSSOProviders = (s.sso_providers && s.sso_providers.length)
+        ? s.sso_providers
+        : [{
+            id: "sso-default",
+            name: "Corporate OIDC SSO",
+            enabled: !!s.oidc_enabled,
+            issuer_url: s.oidc_issuer_url || "",
+            client_id: s.oidc_client_id || "",
+            groups_claim: s.oidc_groups_claim || "groups",
+            admin_group: s.bootstrap_admin_oidc_group || "platform-admins"
+          }];
+      renderSSOProviderRows();
+
+      configuredJWTProviders = (s.jwt_providers && s.jwt_providers.length)
+        ? s.jwt_providers
+        : [{
+            id: "jwt-github-actions",
+            name: "GitHub Actions OIDC",
+            enabled: s.github_oidc_enabled !== false,
+            issuer_url: s.github_oidc_issuer_url || "https://token.actions.githubusercontent.com",
+            audience: s.github_oidc_audience || window.location.origin,
+            subject_prefix: "repo:"
+          }];
+      renderJWTProviderRows();
+
+      document.getElementById("setDefaultTreeState").value = s.default_tree_state || "expanded";
+      document.getElementById("setEnableAutoindex").checked = s.enable_html_autoindex !== false;
+      document.getElementById("setEnableSidecars").checked = s.enable_checksum_sidecars !== false;
+      document.getElementById("setRestoreDays").value = s.default_restore_days || 7;
+      document.getElementById("setRestoreTier").value = s.default_restore_tier || "Standard";
+      document.getElementById("setLogRetentionDays").value = s.access_log_retention_days || 90;
+
+      document.getElementById("setInfoBucket").textContent = `${configuredBuckets.length} bucket(s) configured`;
+      document.getElementById("setInfoDynamo").textContent = s.dynamodb_table || "local";
+      document.getElementById("setInfoRegion").textContent = `${s.aws_region || 'us-east-1'} (${s.backend_mode || 'aws'})`;
+      document.getElementById("setInfoSqs").textContent = s.sqs_queue_url || "In-Process Sync";
+
+      document.getElementById("setRawBaseUrl").textContent = `${window.location.origin}/raw/`;
+      document.getElementById("setRawAccountId").textContent = s.bootstrap_nexus_account_id || "svc-raw-access";
+      document.getElementById("setNewAdminPassword").value = "";
+
+      if (s.updated_at) {
+        document.getElementById("setLastUpdatedNote").textContent =
+          `Last updated by ${s.updated_by || 'system'} at ${new Date(s.updated_at).toISOString().replace('T', ' ').substring(0, 19)} UTC`;
+      }
+    }
+
+    async function saveSettings() {
+      syncBucketInputsFromDOM();
+      syncSSOProvidersFromDOM();
+      syncJWTProvidersFromDOM();
+      const validBuckets = configuredBuckets.filter(b => b.bucket_name && b.bucket_name.trim() !== "");
+      if (!validBuckets.length) {
+        showToast("Please specify at least one valid S3 Bucket Name");
+        return;
+      }
+
+      const payload = {
+        repository_title: document.getElementById("setRepoTitle").value.trim(),
+        default_tree_state: document.getElementById("setDefaultTreeState").value,
+        enable_html_autoindex: document.getElementById("setEnableAutoindex").checked,
+        enable_checksum_sidecars: document.getElementById("setEnableSidecars").checked,
+        default_restore_days: parseInt(document.getElementById("setRestoreDays").value, 10) || 7,
+        default_restore_tier: document.getElementById("setRestoreTier").value,
+        access_log_retention_days: parseInt(document.getElementById("setLogRetentionDays").value, 10) || 90,
+        sso_providers: configuredSSOProviders,
+        jwt_providers: configuredJWTProviders,
+        buckets: validBuckets,
+        new_admin_password: document.getElementById("setNewAdminPassword").value
+      };
+
+      const res = await fetch("/api/v1/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        showToast(err.error || "Failed to save settings");
+        return;
+      }
+      const saved = await res.json();
+      if (saved.repository_title) {
+        document.getElementById("repoTitleText").textContent = saved.repository_title;
+      }
+      await loadSettings();
+      if (saved.default_tree_state === "collapsed") {
+        collapseAllTree();
+      } else {
+        expandAllTree();
+      }
+      showToast("Settings saved!");
+    }
+
     function renderBreadcrumbs(prefix) {
       const container = document.getElementById("breadcrumbs");
       const parts = prefix.split("/").filter(Boolean);
-      let html = `<span class="crumb" onclick="loadDirectory('')">root</span>`;
+      let html = `<span style="color:var(--text-muted); font-size:12px; margin-right:4px;">Tree View:</span><span class="crumb" onclick="selectTreePrefix('')">All Buckets</span>`;
       let acc = "";
       for (const p of parts) {
         acc += p + "/";
-        html += `<span class="crumb-sep">/</span><span class="crumb" onclick="loadDirectory('${acc}')">${p}</span>`;
+        html += `<span class="crumb-sep">/</span><span class="crumb" onclick="selectTreePrefix('${acc}')">${p}</span>`;
       }
       container.innerHTML = html;
-      document.getElementById("rawAutoindexLink").href = "/raw/" + prefix;
+      const rawRel = parts.length > 1 ? parts.slice(1).join("/") + "/" : "";
+      document.getElementById("rawAutoindexLink").href = "/raw/" + rawRel;
+    }
+
+    function selectTreePrefix(prefix) {
+      currentPrefix = prefix || "";
+      if (currentPrefix) {
+        let acc = "";
+        for (const part of currentPrefix.split("/").filter(Boolean)) {
+          acc += part + "/";
+          collapsedPrefixes.delete(acc);
+        }
+      }
+      renderBreadcrumbs(currentPrefix);
+      renderTree(currentTreeFiles, currentMe ? currentMe.effective_permissions : {});
+    }
+
+    function toggleTreeFolder(prefix) {
+      if (collapsedPrefixes.has(prefix)) {
+        collapsedPrefixes.delete(prefix);
+      } else {
+        collapsedPrefixes.add(prefix);
+      }
+      currentPrefix = prefix;
+      renderBreadcrumbs(currentPrefix);
+      renderTree(currentTreeFiles, currentMe ? currentMe.effective_permissions : {});
+    }
+
+    function expandAllTree() {
+      collapsedPrefixes.clear();
+      renderTree(currentTreeFiles, currentMe ? currentMe.effective_permissions : {});
+    }
+
+    function collapseAllTree() {
+      for (const p of allTreePrefixes) {
+        collapsedPrefixes.add(p);
+      }
+      renderTree(currentTreeFiles, currentMe ? currentMe.effective_permissions : {});
     }
 
     async function loadDirectory(prefix) {
-      currentPrefix = prefix || "";
+      if (prefix !== undefined) {
+        currentPrefix = prefix || "";
+      }
       await refreshMe();
+      if (!configuredBuckets.length) {
+        await loadSettings();
+      }
       renderBreadcrumbs(currentPrefix);
 
+      const q = document.getElementById("searchInput").value.trim();
       const tier = document.getElementById("tierFilter").value;
-      const res = await fetch(`/api/v1/browse?prefix=${encodeURIComponent(currentPrefix)}&tier=${encodeURIComponent(tier)}`);
+      const res = await fetch(`/api/v1/search?q=${encodeURIComponent(q)}&tier=${encodeURIComponent(tier)}`);
       const data = await res.json();
-      renderEntries(data.entries || [], data.effective_permissions || {});
+      currentTreeFiles = data.results || [];
+      renderTree(currentTreeFiles, currentMe ? currentMe.effective_permissions : {});
     }
 
     async function runSearch() {
-      const q = document.getElementById("searchInput").value.trim();
-      const tier = document.getElementById("tierFilter").value;
-      if (!q) {
-        return loadDirectory(currentPrefix);
-      }
-      const res = await fetch(`/api/v1/search?q=${encodeURIComponent(q)}&tier=${encodeURIComponent(tier)}`);
-      const data = await res.json();
-      const entries = (data.results || []).map(r => ({
-        type: "FILE",
-        name: r.key,
-        key: r.key,
-        size: r.size,
-        intelligent_tier: r.intelligent_tier,
-        tier_label: r.tier_label,
-        restore_status: r.restore_status,
-        sha256: r.sha256,
-        sha1: r.sha1,
-        last_accessed_at: r.last_accessed_at
-      }));
-      renderEntries(entries, currentMe ? currentMe.effective_permissions : {});
+      collapsedPrefixes.clear();
+      await loadDirectory(currentPrefix);
     }
 
     function clearSearch() {
       document.getElementById("searchInput").value = "";
-      loadDirectory(currentPrefix);
+      collapsedPrefixes.clear();
+      loadDirectory("");
     }
 
-    function renderEntries(entries, perm) {
+    function buildHierarchy(files) {
+      const root = {
+        name: "",
+        prefix: "",
+        depth: -1,
+        dirs: new Map(),
+        files: [],
+        totalFiles: 0,
+        totalSize: 0
+      };
+      allTreePrefixes = new Set();
+
+      const buckets = (configuredBuckets && configuredBuckets.length)
+        ? configuredBuckets
+        : [{ id: "primary", friendly_name: "Primary Artifacts", bucket_name: (currentMe && currentMe.bucket) || "default", region: "us-east-1" }];
+
+      const bucketMapByName = new Map();
+      for (const b of buckets) {
+        const topName = (b.friendly_name || b.bucket_name || "Bucket").replace(/\//g, "-");
+        const topPrefix = topName + "/";
+        allTreePrefixes.add(topPrefix);
+        const bucketNode = {
+          name: topName,
+          prefix: topPrefix,
+          rawPrefix: "",
+          depth: 0,
+          isBucketRoot: true,
+          bucketName: b.bucket_name,
+          bucketRegion: b.region || "us-east-1",
+          dirs: new Map(),
+          files: [],
+          totalFiles: 0,
+          totalSize: 0
+        };
+        root.dirs.set(topName, bucketNode);
+        bucketMapByName.set(b.bucket_name, bucketNode);
+      }
+
+      const defaultBucketNode = root.dirs.values().next().value;
+
+      for (const f of (files || [])) {
+        const key = (f.key || "").replace(/^\/+/, "");
+        if (!key) continue;
+        const parts = key.split("/");
+        const fileName = parts.pop();
+
+        const targetBucketNode = (f.bucket_name && bucketMapByName.has(f.bucket_name))
+          ? bucketMapByName.get(f.bucket_name)
+          : defaultBucketNode;
+
+        if (!targetBucketNode) continue;
+
+        root.totalFiles++;
+        root.totalSize += (f.size || 0);
+        targetBucketNode.totalFiles++;
+        targetBucketNode.totalSize += (f.size || 0);
+
+        let node = targetBucketNode;
+        let accPrefix = targetBucketNode.prefix;
+        let rawAccPrefix = "";
+
+        for (let i = 0; i < parts.length; i++) {
+          const dirName = parts[i];
+          accPrefix += dirName + "/";
+          rawAccPrefix += dirName + "/";
+          allTreePrefixes.add(accPrefix);
+          if (!node.dirs.has(dirName)) {
+            node.dirs.set(dirName, {
+              name: dirName,
+              prefix: accPrefix,
+              rawPrefix: rawAccPrefix,
+              depth: i + 1,
+              isBucketRoot: false,
+              bucketName: targetBucketNode.bucketName,
+              dirs: new Map(),
+              files: [],
+              totalFiles: 0,
+              totalSize: 0
+            });
+          }
+          node = node.dirs.get(dirName);
+          node.totalFiles++;
+          node.totalSize += (f.size || 0);
+        }
+
+        node.files.push({
+          ...f,
+          displayName: fileName,
+          depth: parts.length + 1
+        });
+      }
+      return root;
+    }
+
+    function renderIndentGuides(depth) {
+      let html = "";
+      for (let i = 0; i < depth; i++) {
+        html += `<span class="tree-guide"></span>`;
+      }
+      return `<span class="tree-indent">${html}</span>`;
+    }
+
+    function renderTree(files, perm) {
       const tbody = document.getElementById("browserTableBody");
-      if (!entries.length) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:32px;">No artifacts found in this prefix.</td></tr>`;
+      const root = buildHierarchy(files || []);
+      if (root.dirs.size === 0 && (!files || !files.length)) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:32px;">No artifacts found matching current filter.</td></tr>`;
         return;
       }
 
       let rows = "";
-      if (currentPrefix !== "") {
-        const parts = currentPrefix.split("/").filter(Boolean);
-        parts.pop();
-        const parent = parts.length ? parts.join("/") + "/" : "";
+
+      function renderFileRow(e) {
+        const isArchived = (e.intelligent_tier === "AA" || e.intelligent_tier === "DAA") && e.restore_status !== "RESTORED";
+        const lastAcc = e.last_accessed_at ? new Date(e.last_accessed_at).toISOString().replace("T", " ").substring(0, 19) : "--";
         rows += `
-          <tr>
-            <td colspan="7">
-              <span style="cursor:pointer; color:var(--accent); font-family:var(--font-mono);" onclick="loadDirectory('${parent}')">&#11013; .. (Parent Directory)</span>
+          <tr class="tree-file-row">
+            <td>
+              <div class="tree-cell">
+                ${renderIndentGuides(e.depth)}
+                <span style="display:inline-block; width:18px;"></span>
+                <span style="cursor:pointer; font-weight:600; color:var(--text-main);" onclick="openItemDrawer('${e.key}')" title="${e.key}">
+                  &#128191; ${e.displayName}
+                </span>
+              </div>
+            </td>
+            <td class="mono">${formatBytes(e.size)}</td>
+            <td>
+              <span class="badge tier-${e.intelligent_tier} tier-hover-trigger"
+                    onmouseenter="showTierTooltip(event, '${e.intelligent_tier}')"
+                    onmousemove="moveTierTooltip(event)"
+                    onmouseleave="hideTierTooltip()">
+                ${e.tier_label || e.intelligent_tier} <span class="tier-info-icon" style="border-color:currentColor; color:inherit; background:transparent;">?</span>
+              </span>
+            </td>
+            <td class="mono" style="color:var(--text-muted);">${lastAcc}</td>
+            <td>
+              <div style="display:flex; gap:6px;">
+                ${isArchived
+                  ? `<button class="btn btn-sm btn-primary" onclick="openItemDrawer('${e.key}')">Restore</button>`
+                  : `<a class="btn btn-sm" href="/api/v1/objects/${e.key}/download">Download</a>`
+                }
+                <button class="btn btn-sm" onclick="openItemDrawer('${e.key}')">Details</button>
+                ${perm && perm.can_delete ? `<button class="btn btn-sm btn-danger" onclick="deleteObject('${e.key}')">Delete</button>` : ''}
+              </div>
             </td>
           </tr>`;
       }
 
-      for (const e of entries) {
-        if (e.type === "DIR") {
+      function traverseNode(node, isRootLevel) {
+        const dirEntries = isRootLevel
+          ? Array.from(node.dirs.values())
+          : Array.from(node.dirs.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+        for (const dir of dirEntries) {
+          const isCollapsed = collapsedPrefixes.has(dir.prefix);
+          const chevron = isCollapsed ? "&#9656;" : "&#9662;";
+          const folderIcon = dir.isBucketRoot ? "&#128452;" : (isCollapsed ? "&#128193;" : "&#128194;");
+          const typeDesc = dir.isBucketRoot
+            ? `<span style="color:var(--accent); font-size:12px; font-weight:600;" title="s3://${dir.bucketName} (${dir.bucketRegion || 'us-east-1'})">S3 Bucket</span>`
+            : `<span style="color:var(--text-dim); font-size:12px;">Folder (${dir.rawPrefix || dir.prefix})</span>`;
+          const rawHref = `/raw/${dir.rawPrefix || ''}`;
+
           rows += `
-            <tr>
+            <tr class="tree-folder-row">
               <td>
-                <span style="cursor:pointer; color:var(--accent); font-weight:600; font-family:var(--font-mono);" onclick="loadDirectory('${e.key}')">
-                  &#128193; ${e.name}
-                </span>
-              </td>
-              <td class="mono">--</td>
-              <td><span style="color:var(--text-dim); font-size:12px;">Directory Prefix</span></td>
-              <td class="mono">--</td>
-              <td class="mono">--</td>
-              <td class="mono">--</td>
-              <td>
-                <a class="btn btn-sm" href="/raw/${e.key}" target="_blank">Nexus Index</a>
-              </td>
-            </tr>`;
-        } else {
-          const isArchived = (e.intelligent_tier === "AA" || e.intelligent_tier === "DAA") && e.restore_status !== "RESTORED";
-          const lastAcc = e.last_accessed_at ? new Date(e.last_accessed_at).toISOString().replace("T", " ").substring(0, 19) : "--";
-          rows += `
-            <tr>
-              <td>
-                <span style="cursor:pointer; font-weight:600; color:var(--text-main);" onclick="openItemDrawer('${e.key}')">
-                  &#128191; ${e.name}
-                </span>
-              </td>
-              <td class="mono">${formatBytes(e.size)}</td>
-              <td>
-                <span class="badge tier-${e.intelligent_tier}" title="${e.tier_label || e.intelligent_tier}">
-                  ${e.tier_label || e.intelligent_tier}
-                </span>
-              </td>
-              <td>
-                <span class="hash-cell">
-                  <span title="${e.sha256}">${shortHash(e.sha256)}</span>
-                  <button class="copy-btn" onclick="copyText('${e.sha256}')">Copy</button>
-                </span>
-              </td>
-              <td>
-                <span class="hash-cell">
-                  <span title="${e.sha1}">${shortHash(e.sha1)}</span>
-                  <button class="copy-btn" onclick="copyText('${e.sha1}')">Copy</button>
-                </span>
-              </td>
-              <td class="mono" style="color:var(--text-muted);">${lastAcc}</td>
-              <td>
-                <div style="display:flex; gap:6px;">
-                  ${isArchived
-                    ? `<button class="btn btn-sm btn-primary" onclick="openItemDrawer('${e.key}')">Restore</button>`
-                    : `<a class="btn btn-sm" href="/api/v1/objects/${e.key}/download">Download</a>`
-                  }
-                  <button class="btn btn-sm" onclick="openItemDrawer('${e.key}')">Hashes &amp; Logs</button>
-                  ${perm.can_delete ? `<button class="btn btn-sm btn-danger" onclick="deleteObject('${e.key}')">Delete</button>` : ''}
+                <div class="tree-cell">
+                  ${renderIndentGuides(dir.depth)}
+                  <span class="tree-toggle" onclick="toggleTreeFolder('${dir.prefix}')" title="${isCollapsed ? 'Expand folder' : 'Collapse folder'}">${chevron}</span>
+                  <span class="tree-folder-label" onclick="toggleTreeFolder('${dir.prefix}')">
+                    ${folderIcon} ${dir.name}/
+                  </span>
+                  <span class="tree-folder-meta">(${dir.totalFiles} artifact${dir.totalFiles === 1 ? '' : 's'})</span>
                 </div>
               </td>
+              <td class="mono" style="color:var(--text-muted);">${formatBytes(dir.totalSize)}</td>
+              <td>${typeDesc}</td>
+              <td class="mono">--</td>
+              <td>
+                <a class="btn btn-sm" href="${rawHref}" target="_blank">HTML Index</a>
+              </td>
             </tr>`;
+
+          if (!isCollapsed) {
+            traverseNode(dir, false);
+          }
+        }
+
+        const sortedFiles = [...node.files].sort((a, b) => a.displayName.localeCompare(b.displayName));
+        for (const f of sortedFiles) {
+          renderFileRow(f);
         }
       }
+
+      traverseNode(root, true);
       tbody.innerHTML = rows;
     }
 
@@ -1037,7 +2018,7 @@
 
       document.getElementById("drawerMetaGrid").innerHTML = `
         <div class="meta-item"><label>Size</label><div class="mono">${formatBytes(meta.size)} (${meta.size.toLocaleString()} B)</div></div>
-        <div class="meta-item"><label>Intelligent-Tiering</label><div><span class="badge tier-${meta.intelligent_tier}">${meta.tier_label}</span></div></div>
+        <div class="meta-item"><label>Intelligent-Tiering</label><div><span class="badge tier-${meta.intelligent_tier} tier-hover-trigger" onmouseenter="showTierTooltip(event, '${meta.intelligent_tier}')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">${meta.tier_label} <span class="tier-info-icon" style="border-color:currentColor; color:inherit; background:transparent;">?</span></span></div></div>
         <div class="meta-item"><label>Uploaded By</label><div class="mono">${meta.uploaded_by || 'system'}</div></div>
         <div class="meta-item"><label>Total Downloads</label><div class="mono">${meta.download_count || 0}</div></div>
         <div class="meta-item"><label>Last Accessed</label><div class="mono">${new Date(meta.last_accessed_at).toISOString().replace('T',' ').substring(0,19)} UTC</div></div>
@@ -1105,7 +2086,21 @@
     }
 
     function openUploadModal() {
-      document.getElementById("uploadKeyInput").value = currentPrefix;
+      const sel = document.getElementById("uploadBucketSelect");
+      const buckets = (configuredBuckets && configuredBuckets.length)
+        ? configuredBuckets
+        : [{ friendly_name: "Primary Artifacts", bucket_name: (currentMe && currentMe.bucket) || "default" }];
+
+      const parts = (currentPrefix || "").split("/").filter(Boolean);
+      const topFolder = parts[0] || "";
+      const relKey = parts.length > 1 ? parts.slice(1).join("/") + "/" : "";
+
+      sel.innerHTML = buckets.map(b => {
+        const selected = (b.friendly_name === topFolder) ? "selected" : "";
+        return `<option value="${b.bucket_name}" ${selected}>${b.friendly_name} (${b.bucket_name})</option>`;
+      }).join("");
+
+      document.getElementById("uploadKeyInput").value = relKey;
       document.getElementById("uploadModal").classList.add("open");
     }
 
@@ -1114,13 +2109,14 @@
         const file = input.files[0];
         const keyInput = document.getElementById("uploadKeyInput");
         if (!keyInput.value || keyInput.value.endsWith("/")) {
-          keyInput.value = (keyInput.value || currentPrefix) + file.name;
+          keyInput.value = (keyInput.value || "") + file.name;
         }
       }
     }
 
     async function submitUpload() {
       const key = document.getElementById("uploadKeyInput").value.trim().replace(/^\/+/, "");
+      const targetBucket = document.getElementById("uploadBucketSelect").value;
       const fileInput = document.getElementById("uploadFileInput");
       if (!key || !fileInput.files.length) {
         showToast("Please specify a target key and choose a file");
@@ -1129,7 +2125,7 @@
       const formData = new FormData();
       formData.append("file", fileInput.files[0]);
 
-      const res = await fetch(`/api/v1/objects/${key}`, {
+      const res = await fetch(`/api/v1/objects/${key}?bucket=${encodeURIComponent(targetBucket)}`, {
         method: "POST",
         body: formData
       });
@@ -1319,7 +2315,7 @@
         <h4 style="color:var(--accent); margin-bottom:6px;">Service Account Created — Save Secret Now (Shown Once)</h4>
         <div class="mono" style="margin-bottom:4px;"><strong>Username:</strong> ${data.basic_auth_user}</div>
         <div class="mono" style="margin-bottom:4px;"><strong>Secret Key:</strong> ${data.secret}</div>
-        <div class="mono"><strong>Sonatype Nexus Raw Proxy URL:</strong> ${window.location.origin}/raw/</div>
+        <div class="mono"><strong>HTML Raw Access URL:</strong> ${window.location.origin}/raw/</div>
       `;
       await loadServiceAccounts();
     }

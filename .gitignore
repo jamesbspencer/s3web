@@ -14,8 +14,11 @@ coverage.txt
 
 # Terraform state, caches & local variables
 **/.terraform/*
+**/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
+*.ovpn
+*.local.tf
 crash.log
 crash.*.log
 *.tfvars
@@ -33,3 +36,4 @@ terraform.rc
 .idea/
 *.swp
 *.swo
+

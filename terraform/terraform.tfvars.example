@@ -11,7 +11,7 @@ availability_zones   = ["us-east-1a", "us-east-1b"]
 private_subnet_cidrs = ["10.42.1.0/24", "10.42.2.0/24"]
 enable_vpn_gateway   = true
 
-# Corporate VPN / Sonatype Nexus / Self-Hosted GitHub Runner CIDRs allowed to reach Internal ALB
+# Corporate VPN / Self-Hosted CI Runner CIDRs allowed to reach Internal ALB
 vpn_allowed_cidr_blocks = [
   "10.0.0.0/8",
   "172.16.0.0/12"
@@ -37,5 +37,5 @@ oidc_groups_claim          = "groups"
 github_oidc_issuer_url     = "https://token.actions.githubusercontent.com"
 bootstrap_admin_email      = "admin@example.com"
 bootstrap_admin_oidc_group = "platform-admins"
-bootstrap_nexus_account_id = "svc-nexus-proxy"
+bootstrap_nexus_account_id = "svc-raw-access"
 

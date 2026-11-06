@@ -39,7 +39,7 @@ type Config struct {
 	GitHubOIDCAudience  string
 	GitHubPinnedJWKSJSON string // Optional pinned JWKS JSON for air-gapped private VPCs
 
-	// Bootstrap Admin & Default Nexus Service Account (seeded on first boot)
+	// Bootstrap Admin & Default HTML Raw Access Service Account (seeded on first boot)
 	BootstrapAdminEmail      string
 	BootstrapAdminPassword   string
 	BootstrapAdminOIDCGroup  string
@@ -63,7 +63,7 @@ func Load() *Config {
 		S3Endpoint:               getEnv("S3WEB_S3_ENDPOINT", ""),
 		DynamoDBTable:            getEnv("S3WEB_DYNAMODB_TABLE", "s3web-metadata"),
 		SQSQueueURL:              getEnv("S3WEB_SQS_QUEUE_URL", ""),
-		LocalDataDir:             getEnv("S3WEB_LOCAL_DATA_DIR", "./.s3web-data"),
+		LocalDataDir:             getEnv("S3WEB_LOCAL_DATA_DIR", "/tmp/s3web-data"),
 		SessionSecret:            getEnv("S3WEB_SESSION_SECRET", "dev-secret-change-in-production-32bytes!"),
 		CookieSecure:             getEnvBool("S3WEB_COOKIE_SECURE", false),
 		OIDCEnabled:              getEnvBool("S3WEB_OIDC_ENABLED", false),
@@ -79,8 +79,8 @@ func Load() *Config {
 		BootstrapAdminEmail:      getEnv("S3WEB_BOOTSTRAP_ADMIN_EMAIL", "admin@example.com"),
 		BootstrapAdminPassword:   getEnv("S3WEB_BOOTSTRAP_ADMIN_PASSWORD", "admin-change-me"),
 		BootstrapAdminOIDCGroup:  getEnv("S3WEB_BOOTSTRAP_ADMIN_GROUP", "platform-admins"),
-		BootstrapNexusAccountID:  getEnv("S3WEB_BOOTSTRAP_NEXUS_ID", "svc-nexus-proxy"),
-		BootstrapNexusAccountKey: getEnv("S3WEB_BOOTSTRAP_NEXUS_SECRET", "nexus-proxy-secret-change-me"),
+		BootstrapNexusAccountID:  getEnv("S3WEB_BOOTSTRAP_RAW_ID", getEnv("S3WEB_BOOTSTRAP_NEXUS_ID", "svc-raw-access")),
+		BootstrapNexusAccountKey: getEnv("S3WEB_BOOTSTRAP_RAW_SECRET", getEnv("S3WEB_BOOTSTRAP_NEXUS_SECRET", "raw-access-secret-change-me")),
 		AccessLogRetentionDays:   getEnvInt("S3WEB_LOG_RETENTION_DAYS", 90),
 		WorkerPollInterval:       time.Duration(getEnvInt("S3WEB_WORKER_POLL_SECONDS", 15)) * time.Second,
 	}

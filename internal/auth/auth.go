@@ -189,13 +189,13 @@ func (a *Authenticator) AuthenticateAdminLogin(username, password string) bool {
 }
 
 // AuthenticateRequest inspects the HTTP request for:
-// 1. HTTP Basic Auth (Bootstrap Admin OR Service Account — e.g., Sonatype Nexus)
-// 2. HTTP Bearer Token (Service Account "s3w_..." OR GitHub Actions OIDC JWT "eyJ...")
+// 1. HTTP Basic Auth (Bootstrap Admin OR Service Account — e.g., HTML Raw Access / CLI)
+// 2. HTTP Bearer Token (Service Account "s3w_..." OR CI OIDC JWT "eyJ...")
 // 3. Encrypted Session Cookie (SSO / Admin User)
 func (a *Authenticator) AuthenticateRequest(r *http.Request) (*model.Principal, error) {
 	ctx := r.Context()
 
-	// 1. Check HTTP Basic Auth (Bootstrap Admin OR Sonatype Nexus / CLI Service Account)
+	// 1. Check HTTP Basic Auth (Bootstrap Admin OR HTML Raw Access / CLI Service Account)
 	if username, password, ok := r.BasicAuth(); ok && username != "" {
 		if a.AuthenticateAdminLogin(username, password) {
 			p := &model.Principal{
@@ -230,14 +230,14 @@ func (a *Authenticator) AuthenticateRequest(r *http.Request) (*model.Principal, 
 		return a.authenticateSessionCookie(ctx, cookie.Value)
 	}
 
-	// 4. In local development mode, if no session cookie is set yet, provide a default SSO session
-	// so the developer can immediately test the UI and switch personas in the header switcher.
-	if a.cfg.BackendMode == "local" && !a.cfg.OIDCEnabled {
+	// 4. If OIDC SSO is not enabled yet (or in local mode), provide a default Bootstrap Admin session
+	// so the operator can immediately use the UI and switch personas in the header switcher.
+	if !a.cfg.OIDCEnabled || a.cfg.BackendMode == "local" {
 		p := &model.Principal{
 			Type:        model.PrincipalSSOUser,
 			ID:          a.cfg.BootstrapAdminEmail,
 			Email:       a.cfg.BootstrapAdminEmail,
-			DisplayName: "Local SSO Admin (" + a.cfg.BootstrapAdminEmail + ")",
+			DisplayName: "Bootstrap Admin (" + a.cfg.BootstrapAdminEmail + ")",
 			OIDCGroups:  []string{a.cfg.BootstrapAdminOIDCGroup},
 		}
 		return a.enrichPrincipal(ctx, p)

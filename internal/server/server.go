@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"s3web/internal/auth"
@@ -25,7 +26,7 @@ import (
 	"s3web/internal/ui"
 )
 
-// Server wires together the Web UI, REST API, Sonatype Nexus /raw Proxy, In-App RBAC, and Access Logger.
+// Server wires together the Web UI, REST API, HTML Raw Access (/raw), In-App RBAC, and Access Logger.
 type Server struct {
 	cfg         *config.Config
 	store       store.MetadataStore
@@ -34,6 +35,8 @@ type Server struct {
 	authn       *auth.Authenticator
 	mux         *http.ServeMux
 	uiAssets    http.FileSystem
+	settingsMu  sync.RWMutex
+	settings    model.AppSettings
 }
 
 // New creates and initializes a new Server instance.
@@ -49,6 +52,60 @@ func New(cfg *config.Config, st store.MetadataStore, objStore storage.ObjectStor
 		authn:     authn,
 		mux:       http.NewServeMux(),
 		uiAssets:  ui.FileSystem(),
+		settings: model.AppSettings{
+			RepositoryTitle:          "s3web — S3 Artifact Repository",
+			DefaultTreeState:         "expanded",
+			EnableHTMLAutoindex:      true,
+			EnableChecksumSidecars:   true,
+			DefaultRestoreDays:       7,
+			DefaultRestoreTier:       "Standard",
+			AccessLogRetentionDays:   cfg.AccessLogRetentionDays,
+			OIDCEnabled:              cfg.OIDCEnabled,
+			OIDCIssuerURL:            cfg.OIDCIssuerURL,
+			OIDCClientID:             cfg.OIDCClientID,
+			OIDCGroupsClaim:          cfg.OIDCGroupsClaim,
+			BootstrapAdminOIDCGroup:  cfg.BootstrapAdminOIDCGroup,
+			GitHubOIDCEnabled:        cfg.GitHubOIDCEnabled,
+			GitHubOIDCIssuerURL:      cfg.GitHubOIDCIssuerURL,
+			GitHubOIDCAudience:       cfg.GitHubOIDCAudience,
+			SSOProviders: []model.SSOProviderConfig{
+				{
+					ID:          "sso-default",
+					Name:        "Corporate OIDC SSO",
+					Enabled:     cfg.OIDCEnabled,
+					IssuerURL:   cfg.OIDCIssuerURL,
+					ClientID:    cfg.OIDCClientID,
+					GroupsClaim: cfg.OIDCGroupsClaim,
+					AdminGroup:  cfg.BootstrapAdminOIDCGroup,
+				},
+			},
+			JWTProviders: []model.JWTProviderConfig{
+				{
+					ID:            "jwt-github-actions",
+					Name:          "GitHub Actions OIDC",
+					Enabled:       cfg.GitHubOIDCEnabled,
+					IssuerURL:     cfg.GitHubOIDCIssuerURL,
+					Audience:      cfg.GitHubOIDCAudience,
+					SubjectPrefix: "repo:",
+				},
+			},
+			BackendMode:              cfg.BackendMode,
+			AWSRegion:                cfg.AWSRegion,
+			S3Bucket:                 cfg.S3Bucket,
+			Buckets: []model.BucketMount{
+				{
+					ID:           "primary",
+					FriendlyName: "Primary Artifacts",
+					BucketName:   cfg.S3Bucket,
+					Region:       cfg.AWSRegion,
+				},
+			},
+			DynamoDBTable:            cfg.DynamoDBTable,
+			SQSQueueURL:              cfg.SQSQueueURL,
+			BootstrapNexusAccountID:  cfg.BootstrapNexusAccountID,
+			UpdatedBy:                "system",
+			UpdatedAt:                time.Now().UTC(),
+		},
 	}
 
 	if err := s.seedBootstrapData(context.Background()); err != nil {
@@ -76,9 +133,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/auth/session", s.handleSwitchSession)
 	s.mux.HandleFunc("/api/v1/auth/github-test-jwt", s.withAuth(s.handleMintTestGitHubJWT))
 
-	// Sonatype Nexus Raw Proxy & Apache/Nginx autoindex Repository Endpoint
-	s.mux.HandleFunc("/raw", s.withRawAuth(s.handleRawProxy))
-	s.mux.HandleFunc("/raw/", s.withRawAuth(s.handleRawProxy))
+	// HTML Raw Access & Apache/Nginx autoindex Repository Endpoint (uses identical access control as default UI)
+	s.mux.HandleFunc("/raw", s.withAuth(s.handleRawProxy))
+	s.mux.HandleFunc("/raw/", s.withAuth(s.handleRawProxy))
 
 	// Web UI API Endpoints
 	s.mux.HandleFunc("/api/v1/me", s.withAuth(s.handleMe))
@@ -86,13 +143,14 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/search", s.withAuth(s.handleSearch))
 	s.mux.HandleFunc("/api/v1/objects/", s.withAuth(s.handleObjectsRouter))
 
-	// In-App Permission Management, App Groups & Service Accounts (Admin Console)
+	// In-App Permission Management, App Groups, Service Accounts & Settings (Admin Console)
 	s.mux.HandleFunc("/api/v1/admin/grants", s.withAuth(s.handleAdminGrants))
 	s.mux.HandleFunc("/api/v1/admin/grants/", s.withAuth(s.handleAdminGrantsByID))
 	s.mux.HandleFunc("/api/v1/admin/groups", s.withAuth(s.handleAdminGroups))
 	s.mux.HandleFunc("/api/v1/admin/groups/", s.withAuth(s.handleAdminGroupsByName))
 	s.mux.HandleFunc("/api/v1/admin/service-accounts", s.withAuth(s.handleAdminServiceAccounts))
 	s.mux.HandleFunc("/api/v1/admin/service-accounts/", s.withAuth(s.handleAdminServiceAccountsByID))
+	s.mux.HandleFunc("/api/v1/settings", s.withAuth(s.handleSettings))
 
 	// Embedded Self-Contained Web UI Assets (Zero external CDN calls)
 	s.mux.Handle("/", http.FileServer(s.uiAssets))
@@ -110,15 +168,7 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) withRawAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		p, err := s.authn.AuthenticateRequest(r)
-		if err != nil {
-			w.Header().Set("WWW-Authenticate", `Basic realm="s3web Sonatype Nexus Raw Proxy"`)
-			http.Error(w, "401 Unauthorized: "+err.Error(), http.StatusUnauthorized)
-			return
-		}
-		next(w, r.WithContext(auth.WithPrincipal(r.Context(), p)))
-	}
+	return s.withAuth(next)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -443,8 +493,13 @@ func (s *Server) handleObjectUpload(w http.ResponseWriter, r *http.Request, key 
 	}
 
 	now := time.Now().UTC()
+	bucketName := strings.TrimSpace(r.URL.Query().Get("bucket"))
+	if bucketName == "" {
+		bucketName = s.cfg.S3Bucket
+	}
 	meta := &model.ObjectMeta{
 		Key:             putRes.Key,
+		BucketName:      bucketName,
 		Size:            putRes.Size,
 		ContentType:     contentType,
 		StorageClass:    "INTELLIGENT_TIERING",
@@ -538,8 +593,8 @@ func (s *Server) handleObjectTierUpdate(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, meta)
 }
 
-// handleRawProxy serves /raw/{key...} for Sonatype Nexus Raw Proxy repositories, curl/wget, and browser direct links:
-// 1. HTML Directory Index ("autoindex" style from aws-samples/public-file-browser-for-amazon-s3) when path is a folder.
+// handleRawProxy serves /raw/{key...} for HTML Raw Access, curl/wget, and browser direct links:
+// 1. HTML Directory Index ("autoindex" style) when path is a folder.
 // 2. Virtual .sha256 and .sha1 sidecar files served directly from DynamoDB metadata.
 // 3. HEAD and GET (with Range support, ETag, X-Checksum-Sha256, X-Checksum-Sha1, X-Amz-Storage-Class, X-Amz-Intelligent-Tier).
 func (s *Server) handleRawProxy(w http.ResponseWriter, r *http.Request) {
@@ -650,7 +705,7 @@ func (s *Server) serveRawDirectoryIndex(w http.ResponseWriter, r *http.Request, 
 				html.EscapeString(e.Name))
 		}
 	}
-	fmt.Fprintf(&buf, "</pre>\n<hr>\n<small>s3web Repository Proxy &bull; Bucket: %s (S3 Intelligent-Tiering)</small>\n</body>\n</html>\n", html.EscapeString(s.cfg.S3Bucket))
+	fmt.Fprintf(&buf, "</pre>\n<hr>\n<small>s3web HTML Raw Access &bull; Bucket: %s (S3 Intelligent-Tiering)</small>\n</body>\n</html>\n", html.EscapeString(s.cfg.S3Bucket))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -680,7 +735,7 @@ func (s *Server) streamObjectDownload(w http.ResponseWriter, r *http.Request, ke
 		return
 	}
 
-	// Set Sonatype Nexus & S3 Intelligent-Tiering headers
+	// Set HTML Raw Access & S3 Intelligent-Tiering headers
 	etag := fmt.Sprintf("%q", meta.SHA256)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Last-Modified", meta.UpdatedAt.UTC().Format(http.TimeFormat))
@@ -980,6 +1035,205 @@ func (s *Server) handleAdminServiceAccountsByID(w http.ResponseWriter, r *http.R
 	}
 	_ = s.store.DeleteAccessGrant(r.Context(), "grant-sa-"+id)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "account_id": id})
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	p := auth.PrincipalFromContext(r.Context())
+
+	switch r.Method {
+	case http.MethodGet:
+		s.settingsMu.RLock()
+		cur := s.settings
+		s.settingsMu.RUnlock()
+		writeJSON(w, http.StatusOK, cur)
+
+	case http.MethodPost, http.MethodPut:
+		if !p.EffectivePerm.IsAdmin {
+			writeJSONError(w, http.StatusForbidden, "admin permission required to modify settings")
+			return
+		}
+		var req struct {
+			RepositoryTitle         string `json:"repository_title"`
+			DefaultTreeState        string `json:"default_tree_state"`
+			EnableHTMLAutoindex     bool   `json:"enable_html_autoindex"`
+			EnableChecksumSidecars  bool   `json:"enable_checksum_sidecars"`
+			DefaultRestoreDays      int    `json:"default_restore_days"`
+			DefaultRestoreTier      string `json:"default_restore_tier"`
+			AccessLogRetentionDays  int    `json:"access_log_retention_days"`
+			OIDCEnabled             bool                      `json:"oidc_enabled"`
+			OIDCIssuerURL           string                    `json:"oidc_issuer_url"`
+			OIDCClientID            string                    `json:"oidc_client_id"`
+			OIDCGroupsClaim         string                    `json:"oidc_groups_claim"`
+			BootstrapAdminOIDCGroup string                    `json:"bootstrap_admin_oidc_group"`
+			GitHubOIDCEnabled       bool                      `json:"github_oidc_enabled"`
+			GitHubOIDCIssuerURL     string                    `json:"github_oidc_issuer_url"`
+			GitHubOIDCAudience      string                    `json:"github_oidc_audience"`
+			SSOProviders            []model.SSOProviderConfig `json:"sso_providers"`
+			JWTProviders            []model.JWTProviderConfig `json:"jwt_providers"`
+			Buckets                 []model.BucketMount       `json:"buckets"`
+			NewAdminPassword        string                    `json:"new_admin_password,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+
+		s.settingsMu.Lock()
+		if len(req.Buckets) > 0 {
+			var cleaned []model.BucketMount
+			for idx, b := range req.Buckets {
+				bName := strings.TrimSpace(b.BucketName)
+				fName := strings.TrimSpace(b.FriendlyName)
+				if bName == "" {
+					continue
+				}
+				if fName == "" {
+					fName = bName
+				}
+				region := strings.TrimSpace(b.Region)
+				if region == "" {
+					region = s.cfg.AWSRegion
+				}
+				id := strings.TrimSpace(b.ID)
+				if id == "" {
+					id = fmt.Sprintf("bucket-%d", idx+1)
+				}
+				cleaned = append(cleaned, model.BucketMount{
+					ID:           id,
+					FriendlyName: fName,
+					BucketName:   bName,
+					Region:       region,
+				})
+			}
+			if len(cleaned) > 0 {
+				s.settings.Buckets = cleaned
+			}
+		}
+		if len(req.SSOProviders) > 0 {
+			var cleanedSSO []model.SSOProviderConfig
+			for idx, pCfg := range req.SSOProviders {
+				name := strings.TrimSpace(pCfg.Name)
+				issuer := strings.TrimSpace(pCfg.IssuerURL)
+				if name == "" && issuer == "" {
+					continue
+				}
+				if name == "" {
+					name = fmt.Sprintf("SSO Provider %d", idx+1)
+				}
+				groupsClaim := strings.TrimSpace(pCfg.GroupsClaim)
+				if groupsClaim == "" {
+					groupsClaim = "groups"
+				}
+				adminGroup := strings.TrimSpace(pCfg.AdminGroup)
+				if adminGroup == "" {
+					adminGroup = "platform-admins"
+				}
+				id := strings.TrimSpace(pCfg.ID)
+				if id == "" {
+					id = fmt.Sprintf("sso-%d", idx+1)
+				}
+				cleanedSSO = append(cleanedSSO, model.SSOProviderConfig{
+					ID:          id,
+					Name:        name,
+					Enabled:     pCfg.Enabled,
+					IssuerURL:   issuer,
+					ClientID:    strings.TrimSpace(pCfg.ClientID),
+					GroupsClaim: groupsClaim,
+					AdminGroup:  adminGroup,
+				})
+			}
+			if len(cleanedSSO) > 0 {
+				s.settings.SSOProviders = cleanedSSO
+				primary := cleanedSSO[0]
+				for _, item := range cleanedSSO {
+					if item.Enabled {
+						primary = item
+						break
+					}
+				}
+				s.settings.OIDCEnabled = primary.Enabled
+				s.settings.OIDCIssuerURL = primary.IssuerURL
+				s.settings.OIDCClientID = primary.ClientID
+				s.settings.OIDCGroupsClaim = primary.GroupsClaim
+				s.settings.BootstrapAdminOIDCGroup = primary.AdminGroup
+				s.cfg.BootstrapAdminOIDCGroup = primary.AdminGroup
+			}
+		}
+		if len(req.JWTProviders) > 0 {
+			var cleanedJWT []model.JWTProviderConfig
+			for idx, jCfg := range req.JWTProviders {
+				name := strings.TrimSpace(jCfg.Name)
+				issuer := strings.TrimSpace(jCfg.IssuerURL)
+				if name == "" && issuer == "" {
+					continue
+				}
+				if name == "" {
+					name = fmt.Sprintf("JWT Issuer %d", idx+1)
+				}
+				id := strings.TrimSpace(jCfg.ID)
+				if id == "" {
+					id = fmt.Sprintf("jwt-%d", idx+1)
+				}
+				cleanedJWT = append(cleanedJWT, model.JWTProviderConfig{
+					ID:            id,
+					Name:          name,
+					Enabled:       jCfg.Enabled,
+					IssuerURL:     issuer,
+					Audience:      strings.TrimSpace(jCfg.Audience),
+					SubjectPrefix: strings.TrimSpace(jCfg.SubjectPrefix),
+				})
+			}
+			if len(cleanedJWT) > 0 {
+				s.settings.JWTProviders = cleanedJWT
+				primary := cleanedJWT[0]
+				anyEnabled := false
+				for _, item := range cleanedJWT {
+					if item.Enabled {
+						if !anyEnabled {
+							primary = item
+						}
+						anyEnabled = true
+					}
+				}
+				s.settings.GitHubOIDCEnabled = anyEnabled
+				s.cfg.GitHubOIDCEnabled = anyEnabled
+				s.settings.GitHubOIDCIssuerURL = primary.IssuerURL
+				s.cfg.GitHubOIDCIssuerURL = primary.IssuerURL
+				s.settings.GitHubOIDCAudience = primary.Audience
+				s.cfg.GitHubOIDCAudience = primary.Audience
+			}
+		}
+		if strings.TrimSpace(req.RepositoryTitle) != "" {
+			s.settings.RepositoryTitle = strings.TrimSpace(req.RepositoryTitle)
+		}
+		if req.DefaultTreeState == "collapsed" || req.DefaultTreeState == "expanded" {
+			s.settings.DefaultTreeState = req.DefaultTreeState
+		}
+		s.settings.EnableHTMLAutoindex = req.EnableHTMLAutoindex
+		s.settings.EnableChecksumSidecars = req.EnableChecksumSidecars
+		if req.DefaultRestoreDays > 0 && req.DefaultRestoreDays <= 30 {
+			s.settings.DefaultRestoreDays = req.DefaultRestoreDays
+		}
+		if req.DefaultRestoreTier == "Standard" || req.DefaultRestoreTier == "Expedited" || req.DefaultRestoreTier == "Bulk" {
+			s.settings.DefaultRestoreTier = req.DefaultRestoreTier
+		}
+		if req.AccessLogRetentionDays > 0 {
+			s.settings.AccessLogRetentionDays = req.AccessLogRetentionDays
+			s.cfg.AccessLogRetentionDays = req.AccessLogRetentionDays
+		}
+		if strings.TrimSpace(req.NewAdminPassword) != "" {
+			s.cfg.BootstrapAdminPassword = strings.TrimSpace(req.NewAdminPassword)
+		}
+		s.settings.UpdatedBy = p.ID
+		s.settings.UpdatedAt = time.Now().UTC()
+		updated := s.settings
+		s.settingsMu.Unlock()
+
+		writeJSON(w, http.StatusOK, updated)
+
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 func detectContentType(key string) string {

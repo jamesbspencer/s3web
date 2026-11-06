@@ -1,4 +1,4 @@
-# System Design Document: `s3web` — S3 Artifact Browser & Sonatype Nexus Proxy
+# System Design Document: `s3web` — S3 Artifact Browser & HTML Raw Access
 
 ## 1. Overview & Objectives
 
@@ -12,9 +12,9 @@
 2. **Authentication & In-App RBAC**:
    - **Human Users**: OIDC / OAuth 2.0 SSO (Okta, Microsoft Entra ID, Keycloak, or AWS IAM Identity Center) reachable over the VPN/private network (or via private OIDC issuer/JWKS synchronization).
    - **GitHub Actions Workflows (Workload Identity / OIDC JWT)**: Native, secretless authentication using GitHub Actions OIDC JWTs from self-hosted runners connected to the private network/VPN, validated against cached/pinned JWKS keys and matched against repository/branch/environment claims.
-   - **Service Accounts**: Scoped machine credentials created in-app supporting HTTP Basic Auth and Bearer tokens for Sonatype Nexus and internal automation.
+   - **Service Accounts**: Scoped machine credentials created in-app supporting HTTP Basic Auth and Bearer tokens for HTML Raw Access and internal automation.
    - **In-App Permission Management**: All **Upload**, **Delete**, and **Admin** permissions are configured and managed directly inside the `s3web` application UI (stored in DynamoDB). Default access is **Read-Only**, and administrators can grant **Upload** and/or **Delete** permissions (globally or scoped to specific bucket prefixes) to any SSO Group, App-Managed Group, individual SSO User, GitHub Workflow identity (`repo:org/repo:ref:...`), or Service Account.
-3. **Sonatype Nexus Compatibility**: Serves as an upstream remote target for a **Sonatype Nexus Raw Proxy Repository** (as well as an HTML directory index similar to `public-file-browser-for-amazon-s3`), supporting `GET`, `HEAD`, `ETag`, `Last-Modified`, HTTP `Range` requests, and virtual `.sha256` / `.sha1` checksum sidecar files.
+3. **HTML Raw Access Compatibility**: Serves as an upstream remote target for a **HTML Raw Access** (as well as an HTML directory index similar to `public-file-browser-for-amazon-s3`), supporting `GET`, `HEAD`, `ETag`, `Last-Modified`, HTTP `Range` requests, and virtual `.sha256` / `.sha1` checksum sidecar files.
 4. **Full-File Linear Hashes (`SHA-256` & `SHA-1`)**: Every object exposes verified full-file `SHA-256` and `SHA-1` digests in the Web UI, API responses, HTTP headers, and sidecar endpoints.
 5. **S3 Intelligent-Tiering Visibility & Restore Workflow**: The S3 bucket uses **S3 Intelligent-Tiering** (`INTELLIGENT_TIERING`). The UI displays the exact access tier each object currently resides in (**Frequent Access**, **Infrequent Access**, **Archive Instant Access**, **Archive Access**, or **Deep Archive Access**), tracks tier transitions automatically via S3 events/HeadObject, and provides one-click asynchronous restoration (`RestoreObject`) if an object has transitioned to an asynchronous archive tier.
 6. **Per-Item Access Logs**: Real-time, item-specific access history viewable directly in the Web UI showing every download, upload, delete, or archive-restore event alongside the principal (SSO user, GitHub workflow, or service account), IP address, User-Agent, and bytes transferred.
@@ -28,7 +28,7 @@
 | **Primary UI Pattern** | Classic "file repository" directory tree (`autoindex` style) for downloading public artifacts | React Storage Browser component with prefix locations, search, and multipart upload manager | Tailwind CSS + Alpine.js + Lucide icons with dark/light mode, search, and audit logs | **Hybrid Artifact Repository UI**: Fast `autoindex`-style directory repository table + Tailwind/Lucide design + inline hash badges + slide-over per-item audit drawer |
 | **Network Topology** | Public CloudFront CDN + S3 Static Website | Public Cognito + direct browser-to-S3 SDK calls | Self-hosted container (Spring Boot) | **Private-Only VPC (Private Subnets Only via VPN)** + Internal ALB + ECS Fargate + VPC Gateway/Interface Endpoints |
 | **Authentication** | Anonymous / Cognito Identity Pool (Public Read-Only) | Cognito / IAM Identity Center issuing temporary STS credentials | Local users + OIDC SSO + in-app IAM/group rules | **OIDC SSO + GitHub Actions OIDC JWT + Service Accounts + In-App Permission Management** |
-| **Sonatype Nexus Proxy** | Works only if public/unauthenticated via CloudFront; no virtual checksum sidecars | Unsupported (browser-only AWS SigV4 SDK calls) | Not designed for upstream repository proxying | **Dedicated `/raw/{key...}` HTTP proxy & HTML `autoindex` endpoint** with Basic/Bearer Auth, `HEAD`, `Range`, and `.sha256`/`.sha1` sidecars |
+| **HTML Raw Access** | Works only if public/unauthenticated via CloudFront; no virtual checksum sidecars | Unsupported (browser-only AWS SigV4 SDK calls) | Not designed for upstream repository proxying | **Dedicated `/raw/{key...}` HTTP proxy & HTML `autoindex` endpoint** with Basic/Bearer Auth, `HEAD`, `Range`, and `.sha256`/`.sha1` sidecars |
 | **Multi-GB ISO Checksums** | None (size & timestamp only) | Exposes S3 `ETag` only (composite `md5-partCount` on multipart uploads) | Exposes standard S3 object metadata | **Streaming linear `SHA-256` + `SHA-1`** computed during upload (and via S3 Event async worker for out-of-band uploads) |
 | **Intelligent-Tiering Visibility** | None | Shows top-level `StorageClass` only (does not show sub-tier `x-amz-archive-status`) | Shows top-level `StorageClass` only | **Full S3 Intelligent-Tiering sub-tier badge** (`FA`, `IA`, `AIA`, `AA`, `DAA`) + restore status & UI trigger |
 | **Per-Item Access History** | CloudFront / S3 Access Logs only (not in UI) | External CloudTrail / S3 Server Logs only | Global application audit trail | **Real-time per-item access log** stored in DynamoDB (`LOG#<object_key>`) viewable in each file's UI detail drawer |
@@ -38,7 +38,7 @@
 ## 3. Private-Only AWS VPC Infrastructure Architecture (VPN Access Only)
 
 ### 3.1 Strictly Private Subnets (No Public Subnets / No Internet Gateway Required)
-The VPC contains **only private subnets** across multiple Availability Zones. Inbound access from corporate users, Sonatype Nexus, and self-hosted GitHub Actions runners enters the VPC exclusively through a **Virtual Private Gateway (VGW) / AWS Transit Gateway (TGW) / AWS Client VPN** terminating into the private route tables.
+The VPC contains **only private subnets** across multiple Availability Zones. Inbound access from corporate users, HTML Raw Access, and self-hosted GitHub Actions runners enters the VPC exclusively through a **Virtual Private Gateway (VGW) / AWS Transit Gateway (TGW) / AWS Client VPN** terminating into the private route tables.
 - **Load Balancing**: An `internal`-scheme **Application Load Balancer (ALB)** deployed in the private subnets terminates TLS (`:443`) using a private/ACM certificate and resolves via **Route 53 Private Hosted Zone** (with an Inbound Resolver Endpoint if queried from on-prem DNS over VPN).
 - **Required VPC Endpoints for Private-Only ECS Fargate Operation**:
   Because there are no public subnets or Internet Gateways, the VPC uses:
@@ -57,7 +57,7 @@ The VPC contains **only private subnets** across multiple Availability Zones. In
 flowchart LR
     subgraph Corp["Corporate Network / VPN Clients"]
         Browser["SSO Users\n(Browser over VPN)"]
-        Nexus["Sonatype Nexus\n(Raw Proxy Repository)"]
+        Nexus["HTML Raw Access\n(Raw Proxy Repository)"]
         GHA["GitHub Actions Runner\n(Self-Hosted on Private Net)"]
         IdP["OIDC IdP / GitHub Enterprise\n(Reachable via VPN or Private Route)"]
     end
@@ -100,7 +100,7 @@ flowchart LR
 
 ### 3.3 Network & Security Lockdown for Private-Only Operation
 - **Zero Public Exposure**: `s3web` has no public IP addresses, no public ALB, and no Internet Gateway path. All traffic originates from RFC 1918 / internal CIDR ranges routed over the VPN.
-- **Zero-Cost S3 & DynamoDB Data Transfer**: Routing S3 and DynamoDB traffic through **Gateway VPC Endpoints** incurs **$0.00/hour and $0.00/GB charges**, enabling high-throughput multi-gigabyte ISO streaming between S3, ECS, and Sonatype Nexus inside the private network.
+- **Zero-Cost S3 & DynamoDB Data Transfer**: Routing S3 and DynamoDB traffic through **Gateway VPC Endpoints** incurs **$0.00/hour and $0.00/GB charges**, enabling high-throughput multi-gigabyte ISO streaming between S3, ECS, and HTML Raw Access inside the private network.
 - **S3 Bucket Policy Lockdown**: The S3 bucket policy (`BlockPublicAccess = true`) denies all `s3:*` actions unless `aws:SourceVpce` matches the VPC's S3 Gateway Endpoint ID and `aws:PrincipalArn` matches the ECS Task IAM Role.
 - **Self-Contained Static Assets**: All frontend assets (Tailwind CSS, Alpine.js/React bundle, fonts, and Lucide SVG icons) are bundled directly inside the `s3web` container image—zero external CDN requests (`unpkg`, `jsdelivr`, Google Fonts) are made by the user's browser.
 
@@ -139,7 +139,7 @@ flowchart LR
                  "https://s3web.internal.corp/api/v1/objects/isos/ubuntu/ubuntu-custom.iso"
      ```
 3. **Service Accounts — HTTP Basic Auth & Static Bearer Tokens**:
-   - Sonatype Nexus authenticates using standard HTTP Basic Auth (`Authorization: Basic base64(service_account_id:secret_key)`).
+   - HTML Raw Access authenticates using standard HTTP Basic Auth (`Authorization: Basic base64(service_account_id:secret_key)`).
    - Legacy scripts or non-OIDC tools can use either Basic Auth or `Authorization: Bearer s3w_<token>`.
    - Secrets are hashed at rest in DynamoDB using **Argon2id**. Successful verifications are cached in an in-memory LRU cache inside the ECS task for 60 seconds to avoid repeated Argon2id CPU overhead during rapid Nexus `HEAD`/`GET` bursts.
 
@@ -156,7 +156,7 @@ Inspired by `wenisch-tech/s3webui`'s built-in IAM administration and `amplify-st
        - `APP_GROUP`: Matches an App-Managed Group created in `s3web` where admins add SSO users directly.
        - `SSO_USER`: Matches a specific user's OIDC email or `sub`.
        - `GITHUB_WORKFLOW`: Matches verified GitHub OIDC JWT claims using glob patterns on repository, ref, or environment (e.g., `repo:my-org/iso-builder:ref:refs/heads/main` or `repo:my-org/*:env:release`).
-       - `SERVICE_ACCOUNT`: Matches an in-app Service Account (e.g., `svc-nexus-proxy`).
+       - `SERVICE_ACCOUNT`: Matches an in-app Service Account (e.g., `svc-raw-access`).
      - **Granular Permission Flags** (independently toggleable per prefix rule):
        - `read`: Browse, `GET`/`HEAD` objects & checksums, view item access logs (enabled by default for all SSO users on `*`).
        - `upload`: Upload new ISOs/archives (`POST`/`PUT`) under matching prefixes.
@@ -170,7 +170,7 @@ Inspired by `wenisch-tech/s3webui`'s built-in IAM administration and `amplify-st
 | Storage Curators | `APP_GROUP` | `iso-curators` | `*` | Yes | **Yes** | **Yes** | No |
 | GitHub ISO Builder | `GITHUB_WORKFLOW` | `repo:my-org/iso-builder:ref:refs/heads/main` | `isos/nightly/*` | Yes | **Yes** | No | No |
 | GitHub Release Tag | `GITHUB_WORKFLOW` | `repo:my-org/iso-builder:ref:refs/tags/v*` | `isos/releases/*` | Yes | **Yes** | No | No |
-| Sonatype Nexus | `SERVICE_ACCOUNT` | `svc-nexus-proxy` | `*` | Yes | No | No | No |
+| HTML Raw Access | `SERVICE_ACCOUNT` | `svc-raw-access` | `*` | Yes | No | No | No |
 | Platform Admins | `OIDC_GROUP` | `platform-admins` | `*` | Yes | **Yes** | **Yes** | **Yes** |
 
 3. **Effective Permission Evaluation**:
@@ -180,13 +180,13 @@ Inspired by `wenisch-tech/s3webui`'s built-in IAM administration and `amplify-st
 
 ---
 
-## 5. Sonatype Nexus Raw Proxy Integration
+## 5. HTML Raw Access Integration
 
-### 5.1 How Sonatype Nexus Connects
-In Sonatype Nexus Repository Manager v3:
+### 5.1 How HTML Raw Access Connects
+In HTML Raw Access Repository Manager v3:
 - **Recipe**: `raw (proxy)`
 - **Remote Storage URL**: `https://s3web.internal.vpc/raw/`
-- **HTTP Authentication**: Username/Password using a `viewer` Service Account (e.g., `svc-nexus-proxy`).
+- **HTTP Authentication**: Username/Password using a `viewer` Service Account (e.g., `svc-raw-access`).
 
 ### 5.2 Request Lifecycle & Protocol Semantics
 
@@ -194,7 +194,7 @@ In Sonatype Nexus Repository Manager v3:
 sequenceDiagram
     autonumber
     participant User as Build Node / User
-    participant Nexus as Sonatype Nexus (Raw Proxy)
+    participant Nexus as HTML Raw Access (Raw Proxy)
     participant S3Web as s3web (/raw Endpoint)
     participant DDB as DynamoDB
     participant S3 as Amazon S3 (Gateway Endpoint)
@@ -207,12 +207,12 @@ sequenceDiagram
     S3Web->>S3: GetObject("rhel/9.4/rhel-9.4-x86_64-dvd.iso")
     S3-->>S3Web: Stream object bytes
     S3Web-->>Nexus: 200 OK (Zero-buffer stream to Nexus)
-    S3Web-)DDB: Async PutItem(PK="LOG#rhel/9.4/rhel-9.4-x86_64-dvd.iso", Actor="svc-nexus-proxy", Action="DOWNLOAD")
+    S3Web-)DDB: Async PutItem(PK="LOG#rhel/9.4/rhel-9.4-x86_64-dvd.iso", Actor="svc-raw-access", Action="DOWNLOAD")
     Nexus-->>User: Stream ISO & cache in Nexus Blob Store
 ```
 
 ### 5.3 Checksum Headers, Virtual Sidecar Files & HTML Directory Index (`autoindex`)
-Inspired by [`aws-samples/public-file-browser-for-amazon-s3`](https://aws.amazon.com/blogs/storage/creating-a-simple-public-file-repository-on-amazon-s3/), `/raw/` also acts as a clean, standards-compliant HTTP file repository index so Sonatype Nexus (including its remote storage browser), `curl`, `wget -r`, or automated scripts can traverse directories natively:
+Inspired by [`aws-samples/public-file-browser-for-amazon-s3`](https://aws.amazon.com/blogs/storage/creating-a-simple-public-file-repository-on-amazon-s3/), `/raw/` also acts as a clean, standards-compliant HTTP file repository index so HTML Raw Access (including its remote storage browser), `curl`, `wget -r`, or automated scripts can traverse directories natively:
 1. **HTML Directory Index (`GET /raw/{prefix}/`)**:
    - When a request to `/raw/{prefix}/` ends with a trailing slash (or matches a known folder prefix), `s3web` renders a clean, minimal HTML `<pre>` directory listing (`Index of /raw/{prefix}/`) with relative `<a href="...">` links for every subfolder, file, `.sha256`, and `.sha1` sidecar, plus file size and last-modified timestamp.
 2. **Response Headers on every `GET` / `HEAD` `/raw/{key...}`**:
@@ -277,12 +277,12 @@ flowchart LR
 | **Archive Access** (`AA`) *(Optional)* | `Archive (Restore Req)` (Amber) | 3–5 hours (or Expedited 1–5 min) | Updated immediately via S3 `s3:IntelligentTiering` event notification (`x-amz-archive-status: ARCHIVE_ACCESS`) sent to the `s3web` SQS queue. |
 | **Deep Archive Access** (`DAA`) *(Optional)* | `Deep Archive (Restore Req)` (Purple) | Within 12 hours | Updated immediately via S3 `s3:IntelligentTiering` event notification (`x-amz-archive-status: DEEP_ARCHIVE_ACCESS`) sent to the `s3web` SQS queue. |
 
-#### Handling Archived Objects (`AA` / `DAA`) in the UI & Sonatype Nexus Proxy
-- **Synchronous Tiers (`FA`, `IA`, `AIA`)**: All three synchronous tiers have millisecond first-byte latency. Downloads from the UI or Sonatype Nexus immediately stream the ISO and automatically transition the object back to **Frequent Access (`FA`)**, updating `intelligent_tier = "FA"` and `last_accessed_at = now()` in DynamoDB.
+#### Handling Archived Objects (`AA` / `DAA`) in the UI & HTML Raw Access
+- **Synchronous Tiers (`FA`, `IA`, `AIA`)**: All three synchronous tiers have millisecond first-byte latency. Downloads from the UI or HTML Raw Access immediately stream the ISO and automatically transition the object back to **Frequent Access (`FA`)**, updating `intelligent_tier = "FA"` and `last_accessed_at = now()` in DynamoDB.
 - **Asynchronous Archive Tiers (`AA`, `DAA`)**:
   - If the bucket has optional asynchronous Archive tiers enabled and an ISO transitions to `ARCHIVE_ACCESS` or `DEEP_ARCHIVE_ACCESS`, the UI displays an **`[Archived — Click to Restore]`** action button next to the tier badge.
   - Clicking **Restore** calls `POST /api/v1/objects/{key...}/restore` (`s3:RestoreObject`), updates the badge to `Restoring (Ongoing...)`, and when S3 emits `s3:ObjectRestore:Completed` to SQS, updates the badge to `Restored ( moves to FA)`.
-  - If Sonatype Nexus requests a `GET` on an un-restored `AA`/`DAA` object, `s3web` can optionally auto-trigger `RestoreObject` in the background and return `503 Service Unavailable` with `Retry-After` so Nexus knows the upstream artifact is warming up.
+  - If HTML Raw Access requests a `GET` on an un-restored `AA`/`DAA` object, `s3web` can optionally auto-trigger `RestoreObject` in the background and return `503 Service Unavailable` with `Retry-After` so Nexus knows the upstream artifact is warming up.
 
 ---
 
@@ -312,14 +312,14 @@ A single DynamoDB table (`s3web-metadata`) with On-Demand capacity and Time-To-L
 
 Why application-level logging instead of S3 Server Access Logs?
 - **Latency**: S3 Server Access Logs take 15–120 minutes to appear; `s3web` logs appear in the UI in **< 50 ms**.
-- **Identity Attribution**: S3 Server Access Logs only record the ECS Task IAM Role, whereas `s3web` records the exact OIDC user (`alice@example.com`) or Service Account (`svc-nexus-proxy`).
+- **Identity Attribution**: S3 Server Access Logs only record the ECS Task IAM Role, whereas `s3web` records the exact OIDC user (`alice@example.com`) or Service Account (`svc-raw-access`).
 
 ### Logging Rules
 1. **Download (`GET /raw/*` or `/api/v1/objects/*/download`)**:
    - Wrapped in a byte-counting response stream (`CountingResponseWriter`).
    - When the stream completes (or aborts), an asynchronous non-blocking worker writes the `LOG#<object_key>` record with the exact `bytes_sent`, HTTP status (`200` or `206 Partial Content`), `duration_ms`, `client_ip`, and `user_agent`, and increments `download_count` on `OBJ#<object_key>`.
 2. **Noise Filtering**:
-   - `HEAD` checks from Sonatype Nexus are optionally excluded from the default UI table view (or toggled via a "Show HEAD checks" filter) so the access log stays focused on actual file downloads, uploads, and deletes.
+   - `HEAD` checks from HTML Raw Access are optionally excluded from the default UI table view (or toggled via a "Show HEAD checks" filter) so the access log stays focused on actual file downloads, uploads, and deletes.
 
 ---
 
@@ -355,7 +355,7 @@ Why application-level logging instead of S3 Server Access Logs?
   |                                                                                                        |
   |  Item Access Logs (Total Downloads: 42)                          [Actor: All v] [Action: All v] [CSV]  |
   |  Timestamp (UTC)      | Principal                   | Type      | Action   | Client IP  | Size         |
-  |  2026-11-05 19:35:02  | svc-nexus-proxy             | SERVICE   | DOWNLOAD | 10.24.4.19 | 2.56 GB (200)|
+  |  2026-11-05 19:35:02  | svc-raw-access             | SERVICE   | DOWNLOAD | 10.24.4.19 | 2.56 GB (200)|
   |  2026-11-05 19:22:10  | bob@example.com             | SSO_USER  | DOWNLOAD | 10.24.11.8 | 2.56 GB (200)|
   |  2026-11-05 14:10:44  | my-org/iso-builder@main     | GH_ACTION | UPLOAD   | 10.24.8.41 | 2.56 GB (201)|
   +--------------------------------------------------------------------------------------------------------+
@@ -369,7 +369,7 @@ Why application-level logging instead of S3 Server Access Logs?
   |  release-engineering                    | OIDC_GROUP | linux/*, isos/*  | [x]  | [x]  | [ ] |[ ]|
   |  iso-curators                           | APP_GROUP  | *                | [x]  | [x]  | [x] |[ ]|
   |  repo:my-org/iso-builder:ref:refs/heads | GH_OIDC    | isos/nightly/*   | [x]  | [x]  | [ ] |[ ]|
-  |  svc-nexus-proxy                        | SVC_ACCT   | *                | [x]  | [ ]  | [ ] |[ ]|
+  |  svc-raw-access                        | SVC_ACCT   | *                | [x]  | [ ]  | [ ] |[ ]|
   +------------------------------------------------------------------------------------------------+
 ```
 
@@ -416,7 +416,7 @@ Why application-level logging instead of S3 Server Access Logs?
 
 ## 11. Development Language & Stack Comparison
 
-Because `s3web` sits in the critical data path for **multi-gigabyte ISO streaming**, **on-the-fly dual hashing (`SHA-256` + `SHA-1`)**, **OIDC/GitHub JWT verification**, and **Sonatype Nexus proxying**, the choice of backend and frontend stack directly impacts container memory footprint, streaming throughput, and operational maintenance in a private VPC.
+Because `s3web` sits in the critical data path for **multi-gigabyte ISO streaming**, **on-the-fly dual hashing (`SHA-256` + `SHA-1`)**, **OIDC/GitHub JWT verification**, and **HTML Raw Access proxying**, the choice of backend and frontend stack directly impacts container memory footprint, streaming throughput, and operational maintenance in a private VPC.
 
 ### 11.1 Comparison Matrix
 
@@ -439,7 +439,7 @@ Because `s3web` sits in the critical data path for **multi-gigabyte ISO streamin
   - Go's `io.TeeReader` and `io.MultiWriter` allow piping an incoming 20 GB HTTP upload stream directly through `crypto/sha256` and `crypto/sha1` into AWS SDK v2's `manager.Uploader` in ~15 lines of code with a flat, predictable memory profile.
   - Using `//go:embed`, the entire web UI (whether React/Vite or Tailwind + Alpine.js) compiles into a **single ~25 MB static binary** running on a `gcr.io/distroless/static` container image with zero OS packages or CVEs to patch inside your private VPC.
   - Both the Web/Proxy task and the SQS Background Hasher task can run from the exact same container binary via subcommands (`s3web serve` vs `s3web worker`).
-- **When to choose Go**: You want the lowest Fargate compute cost, rock-solid multi-GB ISO streaming for Sonatype Nexus, minimal container vulnerability surface in a private VPC, and easy maintenance for Cloud/Platform engineers.
+- **When to choose Go**: You want the lowest Fargate compute cost, rock-solid multi-GB ISO streaming for HTML Raw Access, minimal container vulnerability surface in a private VPC, and easy maintenance for Cloud/Platform engineers.
 
 #### 2. TypeScript (Node.js + Fastify/Hono Backend + React Frontend) — **Best for UI-Centric / Amplify Component Reuse**
 - **Why it shines here**:

@@ -91,19 +91,19 @@ func (s *Server) seedBootstrapData(ctx context.Context) error {
 			UpdatedBy:   "system",
 		})
 
-		// 6. Sonatype Nexus Proxy Service Account -> Read-Only across entire bucket
-		nexusHash, err := auth.HashSecret(s.cfg.BootstrapNexusAccountKey)
+		// 6. Default Service Account -> Read-Only across entire bucket
+		saHash, err := auth.HashSecret(s.cfg.BootstrapNexusAccountKey)
 		if err == nil {
 			_ = s.store.UpsertServiceAccount(ctx, &model.ServiceAccount{
 				AccountID:   s.cfg.BootstrapNexusAccountID,
-				Name:        "Sonatype Nexus Raw Proxy Service Account",
-				Description: "Used by Sonatype Nexus Raw (Proxy) Repository over Private VPC",
-				SecretHash:  nexusHash,
+				Name:        "HTML Raw Access Service Account",
+				Description: "Used for HTML Raw Access and CLI automation over Private VPC",
+				SecretHash:  saHash,
 				CreatedBy:   "system",
 			})
 			_ = s.store.UpsertAccessGrant(ctx, &model.AccessGrant{
 				ID:          "grant-sa-" + s.cfg.BootstrapNexusAccountID,
-				Description: "Sonatype Nexus Raw Proxy Read-Only Grant",
+				Description: "HTML Raw Access Read-Only Grant",
 				SubjectType: model.SubjectServiceAccount,
 				SubjectID:   s.cfg.BootstrapNexusAccountID,
 				Prefixes:    []string{"*"},
@@ -219,7 +219,7 @@ func (s *Server) seedBootstrapData(ctx context.Context) error {
 				PrincipalType: model.PrincipalServiceAccount,
 				PrincipalID:   s.cfg.BootstrapNexusAccountID,
 				ClientIP:      "10.24.4.19",
-				UserAgent:     "Nexus/3.70.1-02 (OSS; Linux; amd64; RawProxy)",
+				UserAgent:     "curl/8.7.1 (HTML-Raw-Access)",
 				BytesSent:     putRes.Size,
 				StatusCode:    200,
 				DurationMs:    310,

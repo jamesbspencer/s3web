@@ -38,6 +38,7 @@ type ObjectMeta struct {
 	Key             string          `json:"key"`
 	Filename        string          `json:"filename"`
 	ParentPrefix    string          `json:"parent_prefix"`
+	BucketName      string          `json:"bucket_name,omitempty"`
 	Size            int64           `json:"size"`
 	ContentType     string          `json:"content_type"`
 	StorageClass    string          `json:"storage_class"`
@@ -198,7 +199,7 @@ type AppGroup struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// ServiceAccount represents a machine identity for Sonatype Nexus or automation scripts.
+// ServiceAccount represents a machine identity for HTML Raw Access or automation scripts.
 type ServiceAccount struct {
 	AccountID   string     `json:"account_id"`
 	Name        string     `json:"name"`
@@ -231,4 +232,64 @@ type EffectivePermissions struct {
 	IsAdmin   bool     `json:"is_admin"`
 	Grants    []string `json:"matched_grants,omitempty"`
 }
+
+// BucketMount configures an S3 bucket and its friendly display name in the Artifact Browser tree view.
+type BucketMount struct {
+	ID           string `json:"id"`
+	FriendlyName string `json:"friendly_name"`
+	BucketName   string `json:"bucket_name"`
+	Region       string `json:"region"`
+}
+
+// SSOProviderConfig configures a human OIDC SSO identity provider.
+type SSOProviderConfig struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Enabled     bool   `json:"enabled"`
+	IssuerURL   string `json:"issuer_url"`
+	ClientID    string `json:"client_id"`
+	GroupsClaim string `json:"groups_claim"`
+	AdminGroup  string `json:"admin_group"`
+}
+
+// JWTProviderConfig configures a machine / CI OIDC JWT issuer (e.g. GitHub Actions, GitLab CI, Buildkite).
+type JWTProviderConfig struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Enabled       bool   `json:"enabled"`
+	IssuerURL     string `json:"issuer_url"`
+	Audience      string `json:"audience"`
+	SubjectPrefix string `json:"subject_prefix"`
+}
+
+// AppSettings holds configurable runtime settings for the s3web instance.
+type AppSettings struct {
+	RepositoryTitle          string              `json:"repository_title"`
+	DefaultTreeState         string              `json:"default_tree_state"` // "expanded" or "collapsed"
+	EnableHTMLAutoindex      bool                `json:"enable_html_autoindex"`
+	EnableChecksumSidecars   bool                `json:"enable_checksum_sidecars"`
+	DefaultRestoreDays       int                 `json:"default_restore_days"`
+	DefaultRestoreTier       string              `json:"default_restore_tier"` // "Standard", "Expedited", "Bulk"
+	AccessLogRetentionDays   int                 `json:"access_log_retention_days"`
+	OIDCEnabled              bool                `json:"oidc_enabled"`
+	OIDCIssuerURL            string              `json:"oidc_issuer_url"`
+	OIDCClientID             string              `json:"oidc_client_id"`
+	OIDCGroupsClaim          string              `json:"oidc_groups_claim"`
+	BootstrapAdminOIDCGroup  string              `json:"bootstrap_admin_oidc_group"`
+	GitHubOIDCEnabled        bool                `json:"github_oidc_enabled"`
+	GitHubOIDCIssuerURL      string              `json:"github_oidc_issuer_url"`
+	GitHubOIDCAudience       string              `json:"github_oidc_audience"`
+	SSOProviders             []SSOProviderConfig `json:"sso_providers"`
+	JWTProviders             []JWTProviderConfig `json:"jwt_providers"`
+	BackendMode              string              `json:"backend_mode"`
+	AWSRegion                string              `json:"aws_region"`
+	S3Bucket                 string              `json:"s3_bucket"`
+	Buckets                  []BucketMount       `json:"buckets"`
+	DynamoDBTable            string              `json:"dynamodb_table"`
+	SQSQueueURL              string              `json:"sqs_queue_url"`
+	BootstrapNexusAccountID  string              `json:"bootstrap_nexus_account_id"`
+	UpdatedBy                string              `json:"updated_by,omitempty"`
+	UpdatedAt                time.Time           `json:"updated_at,omitempty"`
+}
+
 
