@@ -7,6 +7,7 @@
 resource "aws_ecr_repository" "s3web" {
   name                 = local.name_prefix
   image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -43,8 +44,9 @@ resource "random_password" "nexus_service_account_secret" {
 }
 
 resource "aws_secretsmanager_secret" "app_secrets" {
-  name       = "${local.name_prefix}/app-secrets"
-  kms_key_id = aws_kms_key.s3web.id
+  name                    = "${local.name_prefix}/app-secrets"
+  kms_key_id              = aws_kms_key.s3web.id
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "app_secrets" {
