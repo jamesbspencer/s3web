@@ -31,9 +31,16 @@ func (e *Evaluator) Resolve(ctx context.Context, p *model.Principal, targetKey s
 	targetKey = strings.TrimLeft(strings.TrimSpace(targetKey), "/")
 	perm := model.EffectivePermissions{}
 
-	// Baseline default: all authenticated SSO users get Read-Only access by default
-	if p.Type == model.PrincipalSSOUser {
+	// Baseline default: all authenticated human users (SSO or Local) get Read-Only access by default
+	if p.Type == model.PrincipalSSOUser || p.Type == model.PrincipalLocalUser {
 		perm.CanRead = true
+	}
+	if p.IsLocalAdmin {
+		perm.IsAdmin = true
+		perm.CanRead = true
+		perm.CanUpload = true
+		perm.CanDelete = true
+		perm.Grants = append(perm.Grants, "local-admin")
 	}
 
 	for _, g := range grants {
@@ -66,21 +73,22 @@ func (e *Evaluator) Resolve(ctx context.Context, p *model.Principal, targetKey s
 
 func subjectMatches(p *model.Principal, g *model.AccessGrant) bool {
 	subID := strings.TrimSpace(g.SubjectID)
+	isHumanUser := p.Type == model.PrincipalSSOUser || p.Type == model.PrincipalLocalUser
 	switch g.SubjectType {
 	case model.SubjectBuiltin:
-		if strings.EqualFold(subID, "authenticated-users") && p.Type == model.PrincipalSSOUser {
+		if strings.EqualFold(subID, "authenticated-users") && isHumanUser {
 			return true
 		}
 		if strings.EqualFold(subID, "all-principals") {
 			return true
 		}
-	case model.SubjectSSOUser:
-		if p.Type == model.PrincipalSSOUser &&
-			(strings.EqualFold(p.ID, subID) || strings.EqualFold(p.Email, subID)) {
+	case model.SubjectSSOUser, model.SubjectLocalUser:
+		if isHumanUser &&
+			(strings.EqualFold(p.ID, subID) || strings.EqualFold(p.Username, subID) || strings.EqualFold(p.Email, subID)) {
 			return true
 		}
 	case model.SubjectOIDCGroup:
-		if p.Type == model.PrincipalSSOUser {
+		if isHumanUser {
 			for _, grp := range p.OIDCGroups {
 				if strings.EqualFold(strings.TrimSpace(grp), subID) {
 					return true
@@ -88,7 +96,7 @@ func subjectMatches(p *model.Principal, g *model.AccessGrant) bool {
 			}
 		}
 	case model.SubjectAppGroup:
-		if p.Type == model.PrincipalSSOUser {
+		if isHumanUser {
 			for _, grp := range p.AppGroups {
 				if strings.EqualFold(strings.TrimSpace(grp), subID) {
 					return true

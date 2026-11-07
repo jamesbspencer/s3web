@@ -16,7 +16,8 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("item not found")
+	ErrNotFound      = errors.New("item not found")
+	ErrDuplicateUser = errors.New("username or email already exists")
 )
 
 // MetadataStore abstracts the DynamoDB Single-Table persistence layer for object metadata,
@@ -45,10 +46,18 @@ type MetadataStore interface {
 	DeleteAppGroup(ctx context.Context, name string) error
 	GetUserAppGroups(ctx context.Context, userEmail string) ([]string, error)
 
+	// Local User Accounts
+	ListLocalUsers(ctx context.Context) ([]model.LocalUser, error)
+	GetLocalUser(ctx context.Context, usernameOrEmail string) (*model.LocalUser, error)
+	UpsertLocalUser(ctx context.Context, user *model.LocalUser) error
+	TouchLocalUserLogin(ctx context.Context, username string, loginAt time.Time) error
+	DeleteLocalUser(ctx context.Context, username string) error
+
 	// Service Accounts
 	ListServiceAccounts(ctx context.Context) ([]model.ServiceAccount, error)
 	GetServiceAccount(ctx context.Context, accountID string) (*model.ServiceAccount, error)
 	UpsertServiceAccount(ctx context.Context, sa *model.ServiceAccount) error
+	TouchServiceAccountUsed(ctx context.Context, accountID string, usedAt time.Time) error
 	DeleteServiceAccount(ctx context.Context, accountID string) error
 }
 
@@ -64,6 +73,7 @@ type persistedState struct {
 	Logs            map[string][]model.AccessLogEntry `json:"logs"`
 	Grants          map[string]*model.AccessGrant    `json:"grants"`
 	AppGroups       map[string]*model.AppGroup       `json:"app_groups"`
+	LocalUsers      map[string]*model.LocalUser      `json:"local_users"`
 	ServiceAccounts map[string]*model.ServiceAccount `json:"service_accounts"`
 }
 
@@ -80,11 +90,30 @@ func NewLocalStore(dataDir string) (*LocalStore, error) {
 			Logs:            make(map[string][]model.AccessLogEntry),
 			Grants:          make(map[string]*model.AccessGrant),
 			AppGroups:       make(map[string]*model.AppGroup),
+			LocalUsers:      make(map[string]*model.LocalUser),
 			ServiceAccounts: make(map[string]*model.ServiceAccount),
 		},
 	}
 	if data, err := os.ReadFile(fp); err == nil && len(data) > 0 {
 		_ = json.Unmarshal(data, &s.state)
+		if s.state.Objects == nil {
+			s.state.Objects = make(map[string]*model.ObjectMeta)
+		}
+		if s.state.Logs == nil {
+			s.state.Logs = make(map[string][]model.AccessLogEntry)
+		}
+		if s.state.Grants == nil {
+			s.state.Grants = make(map[string]*model.AccessGrant)
+		}
+		if s.state.AppGroups == nil {
+			s.state.AppGroups = make(map[string]*model.AppGroup)
+		}
+		if s.state.LocalUsers == nil {
+			s.state.LocalUsers = make(map[string]*model.LocalUser)
+		}
+		if s.state.ServiceAccounts == nil {
+			s.state.ServiceAccounts = make(map[string]*model.ServiceAccount)
+		}
 	}
 	return s, nil
 }
@@ -481,6 +510,97 @@ func (s *LocalStore) GetUserAppGroups(_ context.Context, userEmail string) ([]st
 	return matched, nil
 }
 
+func (s *LocalStore) ListLocalUsers(_ context.Context) ([]model.LocalUser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var users []model.LocalUser
+	for _, u := range s.state.LocalUsers {
+		users = append(users, *u)
+	}
+	sort.Slice(users, func(i, j int) bool {
+		return users[i].Username < users[j].Username
+	})
+	return users, nil
+}
+
+func (s *LocalStore) GetLocalUser(_ context.Context, usernameOrEmail string) (*model.LocalUser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	key := strings.ToLower(strings.TrimSpace(usernameOrEmail))
+	if key == "" {
+		return nil, ErrNotFound
+	}
+	if u, ok := s.state.LocalUsers[key]; ok {
+		cp := *u
+		return &cp, nil
+	}
+	for _, u := range s.state.LocalUsers {
+		if strings.EqualFold(u.Username, key) || (u.Email != "" && strings.EqualFold(u.Email, key)) {
+			cp := *u
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (s *LocalStore) UpsertLocalUser(_ context.Context, user *model.LocalUser) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cp := *user
+	cp.Username = strings.ToLower(strings.TrimSpace(cp.Username))
+	cp.Email = strings.TrimSpace(cp.Email)
+	if cp.Username == "" {
+		return errors.New("username is required")
+	}
+	if cp.Email != "" {
+		for existingKey, existingUser := range s.state.LocalUsers {
+			if existingKey != cp.Username && strings.EqualFold(existingUser.Email, cp.Email) {
+				return ErrDuplicateUser
+			}
+		}
+	}
+	now := time.Now().UTC()
+	if cp.CreatedAt.IsZero() {
+		cp.CreatedAt = now
+	}
+	cp.UpdatedAt = now
+	s.state.LocalUsers[cp.Username] = &cp
+	return s.saveLocked()
+}
+
+func (s *LocalStore) TouchLocalUserLogin(_ context.Context, username string, loginAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := strings.ToLower(strings.TrimSpace(username))
+	u, ok := s.state.LocalUsers[key]
+	if !ok {
+		return ErrNotFound
+	}
+	ts := loginAt.UTC()
+	shouldPersist := u.LastLoginAt == nil || ts.Sub(*u.LastLoginAt) >= time.Minute
+	u.LastLoginAt = &ts
+	if shouldPersist {
+		return s.saveLocked()
+	}
+	return nil
+}
+
+func (s *LocalStore) DeleteLocalUser(_ context.Context, username string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := strings.ToLower(strings.TrimSpace(username))
+	if _, ok := s.state.LocalUsers[key]; !ok {
+		return ErrNotFound
+	}
+	delete(s.state.LocalUsers, key)
+	return s.saveLocked()
+}
+
 func (s *LocalStore) ListServiceAccounts(_ context.Context) ([]model.ServiceAccount, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -517,6 +637,23 @@ func (s *LocalStore) UpsertServiceAccount(_ context.Context, sa *model.ServiceAc
 	}
 	s.state.ServiceAccounts[cp.AccountID] = &cp
 	return s.saveLocked()
+}
+
+func (s *LocalStore) TouchServiceAccountUsed(_ context.Context, accountID string, usedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	sa, ok := s.state.ServiceAccounts[accountID]
+	if !ok {
+		return ErrNotFound
+	}
+	ts := usedAt.UTC()
+	shouldPersist := sa.LastUsedAt == nil || ts.Sub(*sa.LastUsedAt) >= time.Minute
+	sa.LastUsedAt = &ts
+	if shouldPersist {
+		return s.saveLocked()
+	}
+	return nil
 }
 
 func (s *LocalStore) DeleteServiceAccount(_ context.Context, accountID string) error {

@@ -9,11 +9,13 @@
 
 ### Core Requirements
 1. **Private-Only Single-VPC, Multi-AZ Footprint (VPN Access Only)**: Hosted in an isolated AWS VPC containing **only private subnets** (no Internet Gateway, no public subnets, and no public IP addresses), accessed exclusively via a corporate **VPN (Virtual Private Gateway / AWS Transit Gateway / Client VPN)**. All AWS service dependencies (`S3`, `DynamoDB`, `ECR`, `CloudWatch Logs`, `Secrets Manager`, `SQS`, `KMS`) are reached via **VPC Gateway and Interface Endpoints (AWS PrivateLink)**.
-2. **Authentication & In-App RBAC**:
-   - **Human Users**: OIDC / OAuth 2.0 SSO (Okta, Microsoft Entra ID, Keycloak, or AWS IAM Identity Center) reachable over the VPN/private network (or via private OIDC issuer/JWKS synchronization).
-   - **GitHub Actions Workflows (Workload Identity / OIDC JWT)**: Native, secretless authentication using GitHub Actions OIDC JWTs from self-hosted runners connected to the private network/VPN, validated against cached/pinned JWKS keys and matched against repository/branch/environment claims.
-   - **Service Accounts**: Scoped machine credentials created in-app supporting HTTP Basic Auth and Bearer tokens for HTML Raw Access and internal automation.
-   - **In-App Permission Management**: All **Upload**, **Delete**, and **Admin** permissions are configured and managed directly inside the `s3web` application UI (stored in DynamoDB). Default access is **Read-Only**, and administrators can grant **Upload** and/or **Delete** permissions (globally or scoped to specific bucket prefixes) to any SSO Group, App-Managed Group, individual SSO User, GitHub Workflow identity (`repo:org/repo:ref:...`), or Service Account.
+2. **Authentication & In-App RBAC (Zero Anonymous Access)**:
+   - **Anonymous Access Disabled**: Every request to `/api/v1/*` and `/raw/*` requires authentication (Session Cookie, HTTP Basic Auth, or Bearer Token/JWT).
+   - **Local User Accounts (`LOCAL_USER`)**: Built-in local accounts stored with PBKDF2-SHA256 salted password hashes. On initial install, `s3web` automatically creates a default `admin` account with a cryptographically random generated password and a `demo` local user account. Local users can update their own passwords, and administrators can reset passwords or disable individual or all local accounts.
+   - **Human Users (Multi-SSO)**: Multiple OIDC / OAuth 2.0 SSO providers (Okta, Microsoft Entra ID, Keycloak, or AWS IAM Identity Center) configurable in Settings and reachable over the VPN/private network.
+   - **CI Workflows (Multi-JWT Workload Identity / OIDC JWT)**: Multiple configurable OIDC JWT issuers (e.g., GitHub Actions, GitLab CI, Buildkite) validated against cached/pinned JWKS keys, `iss`, `aud`, and `exp`, and matched against repository/branch/environment claims.
+   - **Service Accounts**: Scoped machine credentials created under Settings supporting HTTP Basic Auth and Bearer tokens for HTML Raw Access and internal automation.
+   - **In-App Permission Management**: All **Upload**, **Delete**, and **Admin** permissions are configured and managed directly inside the `s3web` application UI (stored in DynamoDB / local store). Default access for authenticated human users is **Read-Only**, and administrators can grant **Upload** and/or **Delete** permissions (globally or scoped to specific bucket prefixes) to any SSO Group, App-Managed Group, individual SSO User, Local User, CI Workflow identity (`repo:org/repo:ref:...`), or Service Account.
 3. **HTML Raw Access Compatibility**: Serves as an upstream remote target for a **HTML Raw Access** (as well as an HTML directory index similar to `public-file-browser-for-amazon-s3`), supporting `GET`, `HEAD`, `ETag`, `Last-Modified`, HTTP `Range` requests, and virtual `.sha256` / `.sha1` checksum sidecar files.
 4. **Full-File Linear Hashes (`SHA-256` & `SHA-1`)**: Every object exposes verified full-file `SHA-256` and `SHA-1` digests in the Web UI, API responses, HTTP headers, and sidecar endpoints.
 5. **S3 Intelligent-Tiering Visibility & Restore Workflow**: The S3 bucket uses **S3 Intelligent-Tiering** (`INTELLIGENT_TIERING`). The UI displays the exact access tier each object currently resides in (**Frequent Access**, **Infrequent Access**, **Archive Instant Access**, **Archive Access**, or **Deep Archive Access**), tracks tier transitions automatically via S3 events/HeadObject, and provides one-click asynchronous restoration (`RestoreObject`) if an object has transitioned to an asynchronous archive tier.
@@ -56,8 +58,8 @@ The VPC contains **only private subnets** across multiple Availability Zones. In
 ```mermaid
 flowchart LR
     subgraph Corp["Corporate Network / VPN Clients"]
-        Browser["SSO Users\n(Browser over VPN)"]
-        Nexus["HTML Raw Access\n(Raw Proxy Repository)"]
+        Browser["SSO & Local Users\n(Browser over VPN)"]
+        RawClient["HTML Raw Access\n(CLI / Automation Client)"]
         GHA["GitHub Actions Runner\n(Self-Hosted on Private Net)"]
         IdP["OIDC IdP / GitHub Enterprise\n(Reachable via VPN or Private Route)"]
     end
@@ -79,7 +81,7 @@ flowchart LR
     end
 
     Browser -->|VPN Tunnel| VPN
-    Nexus -->|VPN Tunnel| VPN
+    RawClient -->|VPN Tunnel| VPN
     GHA -->|VPN Tunnel| VPN
 
     VPN -->|HTTPS :443| ALB
@@ -138,10 +140,9 @@ flowchart LR
                  -T ./output/ubuntu-custom.iso \
                  "https://s3web.internal.corp/api/v1/objects/isos/ubuntu/ubuntu-custom.iso"
      ```
-3. **Service Accounts — HTTP Basic Auth & Static Bearer Tokens**:
-   - HTML Raw Access authenticates using standard HTTP Basic Auth (`Authorization: Basic base64(service_account_id:secret_key)`).
-   - Legacy scripts or non-OIDC tools can use either Basic Auth or `Authorization: Bearer s3w_<token>`.
-   - Secrets are hashed at rest in DynamoDB using **Argon2id**. Successful verifications are cached in an in-memory LRU cache inside the ECS task for 60 seconds to avoid repeated Argon2id CPU overhead during rapid Nexus `HEAD`/`GET` bursts.
+3. **Service Accounts & Local Accounts — HTTP Basic Auth & Static Bearer Tokens**:
+   - HTML Raw Access authenticates using standard HTTP Basic Auth (`Authorization: Basic base64(username_or_service_account_id:secret)`), Bearer tokens (`Authorization: Bearer <id>:s3w_<token>`), or an authenticated session cookie.
+   - Secrets and local account passwords are hashed at rest using **PBKDF2-HMAC-SHA256** (100,000 iterations with a 16-byte random salt). Successful verifications are cached in an in-memory TTL cache for 60 seconds to avoid repeated CPU overhead during rapid HTML Raw Access `HEAD`/`GET` bursts.
 
 ### 4.2 In-App Permission Management & Prefix-Scoped RBAC
 
@@ -194,21 +195,21 @@ In HTML Raw Access Repository Manager v3:
 sequenceDiagram
     autonumber
     participant User as Build Node / User
-    participant Nexus as HTML Raw Access (Raw Proxy)
+    participant RawClient as HTML Raw Access Client
     participant S3Web as s3web (/raw Endpoint)
     participant DDB as DynamoDB
     participant S3 as Amazon S3 (Gateway Endpoint)
 
-    User->>Nexus: GET /repository/isos/rhel/9.4/rhel-9.4-x86_64-dvd.iso
-    Nexus->>S3Web: HEAD /raw/rhel/9.4/rhel-9.4-x86_64-dvd.iso (Basic Auth)
+    User->>RawClient: Request /raw/rhel/9.4/rhel-9.4-x86_64-dvd.iso
+    RawClient->>S3Web: HEAD /raw/rhel/9.4/rhel-9.4-x86_64-dvd.iso (Basic Auth)
     S3Web->>DDB: GetItem(PK="OBJ#rhel/9.4/rhel-9.4-x86_64-dvd.iso", SK="META")
-    S3Web-->>Nexus: 200 OK (Content-Length, Last-Modified, ETag: "<sha256>", X-Checksum-Sha256, X-Checksum-Sha1)
-    Nexus->>S3Web: GET /raw/rhel/9.4/rhel-9.4-x86_64-dvd.iso (Basic Auth)
+    S3Web-->>RawClient: 200 OK (Content-Length, Last-Modified, ETag: "<sha256>", X-Checksum-Sha256, X-Checksum-Sha1)
+    RawClient->>S3Web: GET /raw/rhel/9.4/rhel-9.4-x86_64-dvd.iso (Basic Auth)
     S3Web->>S3: GetObject("rhel/9.4/rhel-9.4-x86_64-dvd.iso")
     S3-->>S3Web: Stream object bytes
-    S3Web-->>Nexus: 200 OK (Zero-buffer stream to Nexus)
+    S3Web-->>RawClient: 200 OK (Zero-buffer stream to client)
     S3Web-)DDB: Async PutItem(PK="LOG#rhel/9.4/rhel-9.4-x86_64-dvd.iso", Actor="svc-raw-access", Action="DOWNLOAD")
-    Nexus-->>User: Stream ISO & cache in Nexus Blob Store
+    RawClient-->>User: Stream ISO & verify SHA-256
 ```
 
 ### 5.3 Checksum Headers, Virtual Sidecar Files & HTML Directory Index (`autoindex`)
@@ -282,13 +283,13 @@ flowchart LR
 - **Asynchronous Archive Tiers (`AA`, `DAA`)**:
   - If the bucket has optional asynchronous Archive tiers enabled and an ISO transitions to `ARCHIVE_ACCESS` or `DEEP_ARCHIVE_ACCESS`, the UI displays an **`[Archived — Click to Restore]`** action button next to the tier badge.
   - Clicking **Restore** calls `POST /api/v1/objects/{key...}/restore` (`s3:RestoreObject`), updates the badge to `Restoring (Ongoing...)`, and when S3 emits `s3:ObjectRestore:Completed` to SQS, updates the badge to `Restored ( moves to FA)`.
-  - If HTML Raw Access requests a `GET` on an un-restored `AA`/`DAA` object, `s3web` can optionally auto-trigger `RestoreObject` in the background and return `503 Service Unavailable` with `Retry-After` so Nexus knows the upstream artifact is warming up.
+  - If HTML Raw Access requests a `GET` on an un-restored `AA`/`DAA` object, `s3web` returns `409 Conflict` with `Retry-After` so the client knows the upstream artifact requires restoration first.
 
 ---
 
 ## 7. Data Model (Amazon DynamoDB Single-Table Design)
 
-A single DynamoDB table (`s3web-metadata`) with On-Demand capacity and Time-To-Live (TTL) enabled stores object metadata, directory index entries, per-item access logs, and service accounts.
+A single DynamoDB table (`s3web-metadata`) with On-Demand capacity and Time-To-Live (TTL) enabled stores object metadata, directory index entries, per-item access logs, local users, and service accounts.
 
 ### 7.1 Primary Table Schema (`PK` / `SK`)
 
@@ -296,10 +297,11 @@ A single DynamoDB table (`s3web-metadata`) with On-Demand capacity and Time-To-L
 | :--- | :--- | :--- | :--- |
 | **Object Metadata** | `OBJ#<object_key>` | `META` | `key`, `filename`, `parent_prefix`, `size` (Number), `content_type`, `storage_class` (`INTELLIGENT_TIERING`), `intelligent_tier` (`FA`\|`IA`\|`AIA`\|`AA`\|`DAA`), `restore_status` (`NONE`\|`IN_PROGRESS`\|`RESTORED`), `last_accessed_at`, `sha256`, `sha1`, `hash_status` (`READY`\|`COMPUTING`\|`FAILED`), `s3_etag`, `s3_version_id`, `uploaded_by`, `updated_at`, `download_count` (Atomic Counter) |
 | **Directory Entry** | `DIR#<parent_prefix>` | `ENTRY#<type>#<name>` | `type` (`DIR`\|`FILE`), `name`, `key`, `size`, `intelligent_tier` (`FA`\|`IA`\|`AIA`\|`AA`\|`DAA`), `restore_status`, `sha256`, `sha1`, `hash_status`, `updated_at`, `last_accessed_at` |
-| **Per-Item Access Log** | `LOG#<object_key>` | `TS#<iso8601_utc>#<req_id>` | `timestamp`, `action` (`DOWNLOAD`\|`UPLOAD`\|`DELETE`), `principal_type` (`SSO_USER`\|`GITHUB_WORKFLOW`\|`SERVICE_ACCOUNT`), `principal_id` (`alice@corp.com`\|`gh:my-org/iso-builder#run_9821`\|`svc-nexus`), `groups`, `client_ip`, `user_agent`, `bytes_sent`, `status_code`, `range_request` (Boolean), `duration_ms`, `expires_at` (TTL) |
-| **In-App Access Grant** | `GRANT#<subject_type>#<subject_id>` | `RULE#<rule_id>` | `subject_type` (`OIDC_GROUP`\|`APP_GROUP`\|`SSO_USER`\|`GITHUB_WORKFLOW`\|`SERVICE_ACCOUNT`), `subject_id`, `prefixes` (List, e.g., `["isos/*"]`), `can_read` (Bool), `can_upload` (Bool), `can_delete` (Bool), `is_admin` (Bool), `updated_by`, `updated_at` |
-| **App-Managed Group** | `GROUP#<group_name>` | `MEMBER#<user_email>` | `group_name`, `user_email`, `added_by`, `added_at` (Allows grouping SSO users directly in the app without IdP changes) |
-| **Service Account** | `SA#<account_id>` | `META` | `account_id`, `name`, `description`, `secret_hash` (Argon2id), `created_by`, `created_at`, `last_used_at`, `expires_at`, `revoked` (Boolean) |
+| **Per-Item Access Log** | `LOG#<object_key>` | `TS#<iso8601_utc>#<req_id>` | `timestamp`, `action` (`DOWNLOAD`\|`UPLOAD`\|`DELETE`), `principal_type` (`LOCAL_USER`\|`SSO_USER`\|`GITHUB_WORKFLOW`\|`SERVICE_ACCOUNT`), `principal_id` (`admin`\|`alice@corp.com`\|`gh:my-org/iso-builder#run_9821`\|`svc-raw-access`), `groups`, `client_ip`, `user_agent`, `bytes_sent`, `status_code`, `range_request` (Boolean), `duration_ms`, `expires_at` (TTL) |
+| **In-App Access Grant** | `GRANT#<subject_type>#<subject_id>` | `RULE#<rule_id>` | `subject_type` (`OIDC_GROUP`\|`APP_GROUP`\|`SSO_USER`\|`LOCAL_USER`\|`GITHUB_WORKFLOW`\|`SERVICE_ACCOUNT`), `subject_id`, `prefixes` (List, e.g., `["isos/*"]`), `can_read` (Bool), `can_upload` (Bool), `can_delete` (Bool), `is_admin` (Bool), `updated_by`, `updated_at` |
+| **App-Managed Group** | `GROUP#<group_name>` | `MEMBER#<user_email>` | `group_name`, `user_email`, `added_by`, `added_at` (Allows grouping SSO/Local users directly in the app without IdP changes) |
+| **Local User Account** | `USER#<username>` | `META` | `username`, `email`, `display_name`, `password_hash` (PBKDF2-SHA256), `is_admin` (Bool), `disabled` (Bool), `password_changed_at`, `last_login_at`, `created_by`, `created_at`, `updated_at` |
+| **Service Account** | `SA#<account_id>` | `META` | `account_id`, `name`, `description`, `secret_hash` (PBKDF2-SHA256), `created_by`, `created_at`, `last_used_at`, `expires_at`, `revoked` (Boolean) |
 
 ### 7.2 Global Secondary Indexes (GSIs)
 - **GSI1 (`GSI1PK` / `GSI1SK`) — Lookup by Hash & Global Audit Feed**:
@@ -332,7 +334,7 @@ Why application-level logging instead of S3 Server Access Logs?
 |  s3web  |  Bucket: corp-iso-store (Intelligent-Tiering)  |  [Search filename / SHA...]  |  Alice (Admin) |
 +----------------------------------------------------------------------------------------------------------+
 |  Prefix:  root  /  linux  /  ubuntu  /  24.04                              [Filter Tier: All Tiers v]    |
-|  [Refresh]  [Copy Nexus Remote URL]                                        [+ Upload Artifact] (In-App)  |
+|  [Refresh]  [Copy HTML Raw Access URL]                                    [+ Upload Artifact] (In-App)  |
 +----------------------------------------------------------------------------------------------------------+
 |  Name                                | Size     | IT Tier     | SHA-256        | SHA-1          | Actions|
 |--------------------------------------+----------+-------------+----------------+----------------+--------|
@@ -377,27 +379,35 @@ Why application-level logging instead of S3 Server Access Logs?
 
 | Method & Path | Auth | Required Permission | Description |
 | :--- | :--- | :--- | :--- |
-| `GET /auth/login` | Public | None | Initiates OIDC Authorization Code + PKCE flow |
-| `GET /auth/callback` | Public | None | OIDC callback; resolves in-app grants and sets encrypted session cookie |
+| `POST /auth/login` | Public | None | Authenticates a local user account (`username`/`email` + `password`) and sets a signed `HttpOnly` session cookie |
 | `POST /auth/logout` | Session | `read` | Clears session cookie |
-| `GET /raw/{key...}` | Basic / Bearer / Session | `read` (on prefix) | Streams object, HTML `autoindex` directory, or `.sha256`/`.sha1` sidecar for Nexus & CLI |
+| `POST /api/v1/auth/password` | Session / Basic | Local User | Allows any active local user account to update their own password |
+| `GET /raw/{key...}` | Basic / Bearer / Session | `read` (on prefix) | Streams object, HTML `autoindex` directory, or `.sha256`/`.sha1` sidecar for HTML Raw Access & CLI |
 | `HEAD /raw/{key...}` | Basic / Bearer / Session | `read` (on prefix) | Returns `Content-Length`, `Last-Modified`, `ETag`, `X-Checksum-Sha256`, `X-Checksum-Sha1` |
-| `GET /api/v1/me/permissions` | Session / Bearer | `read` | Returns caller's effective `read`/`upload`/`delete`/`admin` permissions for UI rendering |
-| `GET /api/v1/browse?prefix=` | Session / Bearer | `read` (on prefix) | Lists folders and files at prefix with `intelligent_tier`, `restore_status`, `sha256`, `sha1`, `size`, and `updated_at` |
-| `GET /api/v1/search?q=&tier=` | Session / Bearer | `read` | Searches items by filename prefix, Intelligent-Tiering sub-tier, or exact `SHA-256` / `SHA-1` digest |
-| `GET /api/v1/objects/{key...}/meta` | Session / Bearer | `read` (on prefix) | Returns full metadata, live `HeadObject` tier/archive status, and hashes for a single object |
-| `POST /api/v1/objects/{key...}/restore` | Session / Bearer | `read` or `upload` | Initiates `s3:RestoreObject` for items in `ARCHIVE_ACCESS` or `DEEP_ARCHIVE_ACCESS` tiers |
-| `GET /api/v1/objects/{key...}/logs` | Session / Bearer | `read` (on prefix) | Paginated per-item access logs (`?limit=50&cursor=...&action=DOWNLOAD`) |
-| `POST /api/v1/objects/{key...}` | Session / Bearer | `upload` (on prefix) | Streams upload to S3 Multipart Upload while computing linear `SHA-256` & `SHA-1` |
-| `DELETE /api/v1/objects/{key...}` | Session / Bearer | `delete` (on prefix) | Deletes object from S3, removes directory entry, and writes `DELETE` access log |
-| `GET /api/v1/admin/grants` | Session | `admin` | Lists all in-app Upload/Delete/Admin Access Grants |
-| `POST /api/v1/admin/grants` | Session | `admin` | Creates or updates an in-app Access Grant (`upload`, `delete`, `prefixes`) for a Group, User, or Service Account |
-| `DELETE /api/v1/admin/grants/{id}` | Session | `admin` | Deletes an in-app Access Grant |
-| `GET /api/v1/admin/groups` | Session | `admin` | Lists App-Managed Groups and their SSO user members |
-| `POST /api/v1/admin/groups/{name}/members` | Session | `admin` | Adds or removes SSO users in an App-Managed Group |
-| `GET /api/v1/admin/service-accounts` | Session | `admin` | Lists configured Service Accounts |
-| `POST /api/v1/admin/service-accounts` | Session | `admin` | Creates a Service Account and returns its one-time plaintext secret |
-| `DELETE /api/v1/admin/service-accounts/{id}` | Session | `admin` | Revokes a Service Account immediately |
+| `GET /api/v1/me` | Session / Bearer / Basic | `read` | Returns caller's principal and effective `read`/`upload`/`delete`/`admin` permissions |
+| `GET /api/v1/browse?prefix=` | Session / Bearer / Basic | `read` (on prefix) | Lists folders and files at prefix with `intelligent_tier`, `restore_status`, `sha256`, `sha1`, `size`, and `updated_at` |
+| `GET /api/v1/search?q=&tier=` | Session / Bearer / Basic | `read` (per key) | Searches items by filename prefix, Intelligent-Tiering sub-tier, or exact `SHA-256` / `SHA-1` digest |
+| `GET /api/v1/objects/{key...}/meta` | Session / Bearer / Basic | `read` (on prefix) | Returns full metadata, Intelligent-Tiering sub-tier/archive status, and hashes for a single object |
+| `POST /api/v1/objects/{key...}/restore` | Session / Bearer / Basic | `read` (on prefix) | Initiates `s3:RestoreObject` for items in `ARCHIVE_ACCESS` or `DEEP_ARCHIVE_ACCESS` tiers |
+| `GET /api/v1/objects/{key...}/logs` | Session / Bearer / Basic | `read` (on prefix) | Paginated per-item access logs (`?limit=50&action=DOWNLOAD&actor=...`) |
+| `POST /api/v1/objects/{key...}` | Session / Bearer / Basic | `upload` (on prefix) | Streams upload to S3 while computing linear `SHA-256` & `SHA-1` |
+| `DELETE /api/v1/objects/{key...}` | Session / Bearer / Basic | `delete` (on prefix) | Deletes object from S3, removes directory entry, and writes `DELETE` access log |
+| `GET /api/v1/admin/local-users` | Session / Basic | `admin` | Lists all local user accounts (with password hashes stripped) |
+| `POST /api/v1/admin/local-users` | Session / Basic | `admin` | Creates a new local user account |
+| `POST /api/v1/admin/local-users/disable-all` | Session / Basic | `admin` | Disables (or re-enables) all local user accounts immediately |
+| `PUT /api/v1/admin/local-users/{username}/password` | Session / Basic | `admin` | Resets the password of any local user account and invalidates prior sessions |
+| `PUT /api/v1/admin/local-users/{username}/status` | Session / Basic | `admin` | Enables or disables a specific local user account |
+| `DELETE /api/v1/admin/local-users/{username}` | Session / Basic | `admin` | Deletes a local user account |
+| `GET /api/v1/admin/grants` | Session / Basic | `admin` | Lists all in-app Upload/Delete/Admin Access Grants |
+| `POST /api/v1/admin/grants` | Session / Basic | `admin` | Creates or updates an in-app Access Grant (`upload`, `delete`, `prefixes`) |
+| `DELETE /api/v1/admin/grants/{id}` | Session / Basic | `admin` | Deletes an in-app Access Grant |
+| `GET /api/v1/admin/groups` | Session / Basic | `admin` | Lists App-Managed Groups and their members |
+| `POST /api/v1/admin/groups` | Session / Basic | `admin` | Creates or updates an App-Managed Group |
+| `GET /api/v1/admin/service-accounts` | Session / Basic | `admin` | Lists configured Service Accounts |
+| `POST /api/v1/admin/service-accounts` | Session / Basic | `admin` | Creates a Service Account and returns its one-time plaintext secret |
+| `DELETE /api/v1/admin/service-accounts/{id}` | Session / Basic | `admin` | Revokes a Service Account immediately |
+| `GET /api/v1/settings` | Session / Basic | `read` | Returns current repository, bucket, SSO, and JWT settings |
+| `PUT /api/v1/settings` | Session / Basic | `admin` | Updates repository settings, S3 buckets, multiple SSO providers, and multiple CI JWT issuers |
 
 ---
 
@@ -462,7 +472,7 @@ Because `s3web` sits in the critical data path for **multi-gigabyte ISO streamin
 - **Why it shines here**:
   - Very fast to write REST endpoints, DynamoDB queries, and OIDC/JWT middleware.
 - **Trade-offs**:
-  - `s3web` is a **data-plane proxy** for multi-gigabyte ISOs. Because standard `boto3` is synchronous and ASGI servers (`uvicorn`) must bridge async HTTP streams with chunked hashing and multipart S3 uploads, Python requires more CPU and careful threadpool tuning under concurrent Nexus + browser transfers.
+  - `s3web` is a **data-plane proxy** for multi-gigabyte ISOs. Because standard `boto3` is synchronous and ASGI servers (`uvicorn`) must bridge async HTTP streams with chunked hashing and multipart S3 uploads, Python requires more CPU and careful threadpool tuning under concurrent HTML Raw Access + browser transfers.
 - **When to choose Python**: Only if the engineering team is exclusively a Python shop; otherwise, Go or TypeScript is strongly preferred for high-throughput S3 streaming.
 
 #### 5. Rust (Axum + Tokio + `aws-sdk-rust`) — **Best for Maximum Performance, Higher Engineering Cost**
@@ -478,7 +488,7 @@ Because `s3web` sits in the critical data path for **multi-gigabyte ISO streamin
 
 | Layer | Recommended Choice | Alternative (If Full-Stack TS Preferred) |
 | :--- | :--- | :--- |
-| **Backend API, `/raw` Nexus Proxy & Hasher** | **Go 1.23+** (`chi` or `echo` router + `aws-sdk-go-v2` + `coreos/go-oidc`) | **TypeScript on Node 22 LTS** (`Fastify` + `@aws-sdk/client-s3` + `jose`) |
+| **Backend API, `/raw` HTML Raw Access Proxy & Hasher** | **Go 1.23+** (`chi` or `echo` router + `aws-sdk-go-v2` + `coreos/go-oidc`) | **TypeScript on Node 22 LTS** (`Fastify` + `@aws-sdk/client-s3` + `jose`) |
 | **Web UI Frontend** | **React + TypeScript + Vite + Tailwind CSS + Lucide Icons** (embedded into the Go binary via `go:embed`) *OR* **Server-rendered Go `html/template` + Alpine.js + Tailwind** (`s3webui` style) | **React + TypeScript + Vite + Tailwind CSS + Lucide Icons** |
 | **Infrastructure as Code** | **Terraform** (or **AWS CDK in TypeScript**) | **AWS CDK in TypeScript** |
 

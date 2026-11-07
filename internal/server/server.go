@@ -127,10 +127,11 @@ func (s *Server) registerRoutes() {
 	// Healthcheck for AWS Internal ALB Target Group
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 
-	// Authentication & Persona / Token Endpoints
+	// Authentication & Local Account Password Endpoints
 	s.mux.HandleFunc("/auth/login", s.handleAuthLogin)
 	s.mux.HandleFunc("/auth/logout", s.handleAuthLogout)
-	s.mux.HandleFunc("/api/v1/auth/session", s.handleSwitchSession)
+	s.mux.HandleFunc("/api/v1/auth/password", s.withAuth(s.handleChangeOwnPassword))
+	s.mux.HandleFunc("/api/v1/auth/session", s.withAuth(s.handleSwitchSession))
 	s.mux.HandleFunc("/api/v1/auth/github-test-jwt", s.withAuth(s.handleMintTestGitHubJWT))
 
 	// HTML Raw Access & Apache/Nginx autoindex Repository Endpoint (uses identical access control as default UI)
@@ -143,7 +144,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/search", s.withAuth(s.handleSearch))
 	s.mux.HandleFunc("/api/v1/objects/", s.withAuth(s.handleObjectsRouter))
 
-	// In-App Permission Management, App Groups, Service Accounts & Settings (Admin Console)
+	// In-App Permission Management, Local Accounts, App Groups, Service Accounts & Settings (Admin Console)
+	s.mux.HandleFunc("/api/v1/admin/local-users", s.withAuth(s.handleAdminLocalUsers))
+	s.mux.HandleFunc("/api/v1/admin/local-users/", s.withAuth(s.handleAdminLocalUsersByID))
 	s.mux.HandleFunc("/api/v1/admin/grants", s.withAuth(s.handleAdminGrants))
 	s.mux.HandleFunc("/api/v1/admin/grants/", s.withAuth(s.handleAdminGrantsByID))
 	s.mux.HandleFunc("/api/v1/admin/groups", s.withAuth(s.handleAdminGroups))
@@ -160,6 +163,9 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.authn.AuthenticateRequest(r)
 		if err != nil {
+			if strings.HasPrefix(r.URL.Path, "/raw") {
+				w.Header().Set("WWW-Authenticate", `Basic realm="s3web"`)
+			}
 			writeJSONError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
@@ -184,70 +190,114 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		var req struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
-		}
-		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-			_ = json.NewDecoder(r.Body).Decode(&req)
-		} else {
-			_ = r.ParseForm()
-			req.Username = r.FormValue("username")
-			req.Password = r.FormValue("password")
-		}
-		if !s.authn.AuthenticateAdminLogin(req.Username, req.Password) {
-			writeJSONError(w, http.StatusUnauthorized, "invalid bootstrap admin username or password")
-			return
-		}
-		if err := s.authn.IssueSessionCookie(w, s.cfg.BootstrapAdminEmail, "Bootstrap Admin ("+s.cfg.BootstrapAdminEmail+")", []string{s.cfg.BootstrapAdminOIDCGroup}); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "authenticated",
-			"email":  s.cfg.BootstrapAdminEmail,
-		})
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "POST required for login")
 		return
 	}
-
-	// Supports quick SSO login or persona simulation when OIDC IdP is not reachable locally
-	email := strings.TrimSpace(r.URL.Query().Get("email"))
-	if email == "" {
-		email = s.cfg.BootstrapAdminEmail
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
 	}
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	if name == "" {
-		name = email
+	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	} else {
+		_ = r.ParseForm()
+		req.Username = r.FormValue("username")
+		req.Password = r.FormValue("password")
 	}
-	groupsRaw := strings.TrimSpace(r.URL.Query().Get("groups"))
-	var groups []string
-	if groupsRaw != "" {
-		for _, g := range strings.Split(groupsRaw, ",") {
-			if trimmed := strings.TrimSpace(g); trimmed != "" {
-				groups = append(groups, trimmed)
-			}
-		}
+	user, err := s.authn.AuthenticateLocalUser(r.Context(), req.Username, req.Password)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, err.Error())
+		return
 	}
-	if err := s.authn.IssueSessionCookie(w, email, name, groups); err != nil {
+	if err := s.authn.IssueLocalSessionCookie(w, user); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusFound)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":       "authenticated",
+		"username":     user.Username,
+		"email":        user.Email,
+		"display_name": user.DisplayName,
+		"is_admin":     user.IsAdmin,
+	})
 }
 
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	s.authn.ClearSessionCookie(w)
-	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") || r.Method == http.MethodPost {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+func (s *Server) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	p := auth.PrincipalFromContext(r.Context())
+	if p == nil || p.Type != model.PrincipalLocalUser {
+		writeJSONError(w, http.StatusBadRequest, "password self-service is only available for local accounts")
+		return
+	}
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(req.CurrentPassword) == "" || strings.TrimSpace(req.NewPassword) == "" {
+		writeJSONError(w, http.StatusBadRequest, "current_password and new_password are required")
+		return
+	}
+	if len(strings.TrimSpace(req.NewPassword)) < 6 {
+		writeJSONError(w, http.StatusBadRequest, "new_password must be at least 6 characters")
+		return
+	}
+	user, err := s.store.GetLocalUser(r.Context(), p.Username)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, "local account not found")
+		return
+	}
+	if user.Disabled {
+		writeJSONError(w, http.StatusForbidden, "local account is disabled")
+		return
+	}
+	if !auth.VerifySecret(req.CurrentPassword, user.PasswordHash) {
+		writeJSONError(w, http.StatusUnauthorized, "current password is incorrect")
+		return
+	}
+	newHash, err := auth.HashSecret(req.NewPassword)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	now := time.Now().UTC()
+	user.PasswordHash = newHash
+	user.PasswordChangedAt = &now
+	if err := s.store.UpsertLocalUser(r.Context(), user); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.authn.IssueLocalSessionCookie(w, user)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":   "password_updated",
+		"username": user.Username,
+	})
+}
+
 func (s *Server) handleSwitchSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	p := auth.PrincipalFromContext(r.Context())
+	if p == nil || !p.EffectivePerm.IsAdmin {
+		writeJSONError(w, http.StatusForbidden, "admin permission required")
 		return
 	}
 	var req struct {
@@ -364,10 +414,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	tier := strings.TrimSpace(r.URL.Query().Get("tier"))
-	results, err := s.store.SearchObjects(r.Context(), q, tier)
+	rawResults, err := s.store.SearchObjects(r.Context(), q, tier)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	results := make([]model.ObjectMeta, 0, len(rawResults))
+	for _, item := range rawResults {
+		if perm, permErr := s.evaluator.Resolve(r.Context(), p, item.Key); permErr == nil && perm.CanRead {
+			results = append(results, item)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"query":   q,
@@ -557,7 +613,13 @@ func (s *Server) handleObjectRestore(w http.ResponseWriter, r *http.Request, key
 		writeJSONError(w, http.StatusForbidden, "permission denied")
 		return
 	}
-	if err := s.storage.Restore(r.Context(), key, 7); err != nil {
+	s.settingsMu.RLock()
+	restoreDays := s.settings.DefaultRestoreDays
+	s.settingsMu.RUnlock()
+	if restoreDays <= 0 {
+		restoreDays = 7
+	}
+	if err := s.storage.Restore(r.Context(), key, restoreDays); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -573,7 +635,8 @@ func (s *Server) handleObjectRestore(w http.ResponseWriter, r *http.Request, key
 
 func (s *Server) handleObjectTierUpdate(w http.ResponseWriter, r *http.Request, key string) {
 	p := auth.PrincipalFromContext(r.Context())
-	if !p.EffectivePerm.IsAdmin && !p.EffectivePerm.CanUpload {
+	perm, err := s.evaluator.Resolve(r.Context(), p, key)
+	if err != nil || (!perm.IsAdmin && !perm.CanUpload) {
 		writeJSONError(w, http.StatusForbidden, "admin or upload permission required to change tier")
 		return
 	}
@@ -613,21 +676,34 @@ func (s *Server) handleRawProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.settingsMu.RLock()
+	enableSidecars := s.settings.EnableChecksumSidecars
+	enableAutoindex := s.settings.EnableHTMLAutoindex
+	s.settingsMu.RUnlock()
+
 	// 1. Check if request is for a virtual sidecar (.sha256 or .sha1)
 	if strings.HasSuffix(rawKey, ".sha256") || strings.HasSuffix(rawKey, ".sha1") {
+		if !enableSidecars {
+			http.Error(w, "404 Checksum Sidecars Disabled", http.StatusNotFound)
+			return
+		}
 		s.serveVirtualChecksumSidecar(w, r, rawKey)
 		return
 	}
 
 	// 2. If rawKey is empty or ends with "/", or doesn't exist as a file but has directory children, render HTML autoindex
 	if rawKey == "" || strings.HasSuffix(r.URL.Path, "/") {
+		if !enableAutoindex {
+			http.Error(w, "403 HTML Directory Autoindex Disabled", http.StatusForbidden)
+			return
+		}
 		s.serveRawDirectoryIndex(w, r, rawKey)
 		return
 	}
 
 	if _, err := s.store.GetObjectMeta(r.Context(), rawKey); errors.Is(err, store.ErrNotFound) {
 		entries, listErr := s.store.ListDirectory(r.Context(), rawKey+"/", "")
-		if listErr == nil && len(entries) > 0 {
+		if listErr == nil && len(entries) > 0 && enableAutoindex {
 			http.Redirect(w, r, "/raw/"+strings.TrimSuffix(rawKey, "/")+"/", http.StatusMovedPermanently)
 			return
 		}
@@ -751,6 +827,8 @@ func (s *Server) streamObjectDownload(w http.ResponseWriter, r *http.Request, ke
 	}
 	if forceAttachment {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", meta.Filename))
+	} else {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	}
 
 	// Handle conditional If-None-Match
@@ -824,10 +902,238 @@ func (s *Server) recordAccessLog(
 	_ = s.store.AppendAccessLog(r.Context(), entry)
 }
 
-// --- In-App Admin Endpoints (Access Grants, App Groups, Service Accounts) ---
+// --- In-App Admin Endpoints (Local Accounts, Access Grants, App Groups, Service Accounts) ---
+
+func (s *Server) handleAdminLocalUsers(w http.ResponseWriter, r *http.Request) {
+	p := auth.PrincipalFromContext(r.Context())
+	if !p.EffectivePerm.IsAdmin {
+		writeJSONError(w, http.StatusForbidden, "admin permission required to manage local accounts")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		users, err := s.store.ListLocalUsers(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		sanitized := make([]model.LocalUser, 0, len(users))
+		for _, u := range users {
+			sanitized = append(sanitized, u.Sanitized())
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"local_users": sanitized})
+
+	case http.MethodPost:
+		var req struct {
+			Username    string `json:"username"`
+			Email       string `json:"email"`
+			DisplayName string `json:"display_name"`
+			Password    string `json:"password"`
+			IsAdmin     bool   `json:"is_admin"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		username := strings.ToLower(strings.TrimSpace(req.Username))
+		if username == "" {
+			writeJSONError(w, http.StatusBadRequest, "username is required")
+			return
+		}
+		password := strings.TrimSpace(req.Password)
+		if len(password) < 6 {
+			writeJSONError(w, http.StatusBadRequest, "password must be at least 6 characters")
+			return
+		}
+		email := strings.TrimSpace(req.Email)
+		if email == "" {
+			email = username + "@example.com"
+		}
+		if existing, err := s.store.GetLocalUser(r.Context(), username); err == nil && existing != nil {
+			writeJSONError(w, http.StatusConflict, "local account username or email already exists")
+			return
+		}
+		if existingByEmail, err := s.store.GetLocalUser(r.Context(), email); err == nil && existingByEmail != nil {
+			writeJSONError(w, http.StatusConflict, "local account username or email already exists")
+			return
+		}
+		displayName := strings.TrimSpace(req.DisplayName)
+		if displayName == "" {
+			displayName = username
+		}
+		hash, err := auth.HashSecret(password)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		user := &model.LocalUser{
+			Username:     username,
+			Email:        email,
+			DisplayName:  displayName,
+			PasswordHash: hash,
+			IsAdmin:      req.IsAdmin,
+			Disabled:     false,
+			CreatedBy:    p.ID,
+			CreatedAt:    time.Now().UTC(),
+		}
+		if err := s.store.UpsertLocalUser(r.Context(), user); err != nil {
+			if errors.Is(err, store.ErrDuplicateUser) {
+				writeJSONError(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, user.Sanitized())
+
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleAdminLocalUsersByID(w http.ResponseWriter, r *http.Request) {
+	p := auth.PrincipalFromContext(r.Context())
+	if !p.EffectivePerm.IsAdmin {
+		writeJSONError(w, http.StatusForbidden, "admin permission required to manage local accounts")
+		return
+	}
+
+	subPath := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/local-users/")
+	subPath = strings.Trim(subPath, "/")
+	if subPath == "" {
+		writeJSONError(w, http.StatusBadRequest, "local username or action is required")
+		return
+	}
+
+	// Bulk action: POST /api/v1/admin/local-users/disable-all
+	if subPath == "disable-all" {
+		if r.Method != http.MethodPost && r.Method != http.MethodPut {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req struct {
+			Disabled *bool `json:"disabled"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		targetDisabled := true
+		if req.Disabled != nil {
+			targetDisabled = *req.Disabled
+		}
+		users, err := s.store.ListLocalUsers(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		count := 0
+		for i := range users {
+			u := users[i]
+			u.Disabled = targetDisabled
+			if err := s.store.UpsertLocalUser(r.Context(), &u); err == nil {
+				count++
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":   "updated_all",
+			"disabled": targetDisabled,
+			"count":    count,
+		})
+		return
+	}
+
+	// Per-user actions:
+	// - PUT/POST /api/v1/admin/local-users/{username}/password
+	// - PUT/POST /api/v1/admin/local-users/{username}/status
+	// - DELETE /api/v1/admin/local-users/{username}
+	if strings.HasSuffix(subPath, "/password") {
+		if r.Method != http.MethodPut && r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		username := strings.TrimSuffix(subPath, "/password")
+		var req struct {
+			NewPassword string `json:"new_password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		newPass := strings.TrimSpace(req.NewPassword)
+		if len(newPass) < 6 {
+			writeJSONError(w, http.StatusBadRequest, "new_password must be at least 6 characters")
+			return
+		}
+		user, err := s.store.GetLocalUser(r.Context(), username)
+		if err != nil {
+			writeJSONError(w, http.StatusNotFound, "local account not found")
+			return
+		}
+		hash, err := auth.HashSecret(newPass)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		now := time.Now().UTC()
+		user.PasswordHash = hash
+		user.PasswordChangedAt = &now
+		if err := s.store.UpsertLocalUser(r.Context(), user); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":     "password_updated",
+			"local_user": user.Sanitized(),
+		})
+		return
+	}
+
+	if strings.HasSuffix(subPath, "/status") {
+		if r.Method != http.MethodPut && r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		username := strings.TrimSuffix(subPath, "/status")
+		var req struct {
+			Disabled bool `json:"disabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		user, err := s.store.GetLocalUser(r.Context(), username)
+		if err != nil {
+			writeJSONError(w, http.StatusNotFound, "local account not found")
+			return
+		}
+		user.Disabled = req.Disabled
+		if err := s.store.UpsertLocalUser(r.Context(), user); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":     "status_updated",
+			"local_user": user.Sanitized(),
+		})
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		if err := s.store.DeleteLocalUser(r.Context(), subPath); err != nil {
+			writeJSONError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "username": subPath})
+		return
+	}
+
+	writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+}
 
 func (s *Server) handleAdminGrants(w http.ResponseWriter, r *http.Request) {
 	p := auth.PrincipalFromContext(r.Context())
+	if !p.EffectivePerm.IsAdmin {
+		writeJSONError(w, http.StatusForbidden, "admin permission required to manage access grants")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		grants, err := s.store.ListAccessGrants(r.Context())
@@ -837,10 +1143,6 @@ func (s *Server) handleAdminGrants(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"grants": grants})
 	case http.MethodPost:
-		if !p.EffectivePerm.IsAdmin {
-			writeJSONError(w, http.StatusForbidden, "admin permission required to manage access grants")
-			return
-		}
 		var grant model.AccessGrant
 		if err := json.NewDecoder(r.Body).Decode(&grant); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
@@ -881,6 +1183,10 @@ func (s *Server) handleAdminGrantsByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 	p := auth.PrincipalFromContext(r.Context())
+	if !p.EffectivePerm.IsAdmin {
+		writeJSONError(w, http.StatusForbidden, "admin permission required")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		groups, err := s.store.ListAppGroups(r.Context())
@@ -890,10 +1196,6 @@ func (s *Server) handleAdminGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"groups": groups})
 	case http.MethodPost:
-		if !p.EffectivePerm.IsAdmin {
-			writeJSONError(w, http.StatusForbidden, "admin permission required")
-			return
-		}
 		var group model.AppGroup
 		if err := json.NewDecoder(r.Body).Decode(&group); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
@@ -934,6 +1236,10 @@ func (s *Server) handleAdminGroupsByName(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleAdminServiceAccounts(w http.ResponseWriter, r *http.Request) {
 	p := auth.PrincipalFromContext(r.Context())
+	if !p.EffectivePerm.IsAdmin {
+		writeJSONError(w, http.StatusForbidden, "admin permission required")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		accounts, err := s.store.ListServiceAccounts(r.Context())
@@ -943,10 +1249,6 @@ func (s *Server) handleAdminServiceAccounts(w http.ResponseWriter, r *http.Reque
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"service_accounts": accounts})
 	case http.MethodPost:
-		if !p.EffectivePerm.IsAdmin {
-			writeJSONError(w, http.StatusForbidden, "admin permission required")
-			return
-		}
 		var req struct {
 			AccountID   string   `json:"account_id"`
 			Name        string   `json:"name"`
@@ -1000,7 +1302,7 @@ func (s *Server) handleAdminServiceAccounts(w http.ResponseWriter, r *http.Reque
 			SubjectType: model.SubjectServiceAccount,
 			SubjectID:   req.AccountID,
 			Prefixes:    req.Prefixes,
-			CanRead:     req.CanRead || true,
+			CanRead:     req.CanRead,
 			CanUpload:   req.CanUpload,
 			CanDelete:   req.CanDelete,
 			UpdatedBy:   p.ID,
@@ -1156,7 +1458,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				s.settings.OIDCClientID = primary.ClientID
 				s.settings.OIDCGroupsClaim = primary.GroupsClaim
 				s.settings.BootstrapAdminOIDCGroup = primary.AdminGroup
-				s.cfg.BootstrapAdminOIDCGroup = primary.AdminGroup
 			}
 		}
 		if len(req.JWTProviders) > 0 {
@@ -1196,11 +1497,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				s.settings.GitHubOIDCEnabled = anyEnabled
-				s.cfg.GitHubOIDCEnabled = anyEnabled
 				s.settings.GitHubOIDCIssuerURL = primary.IssuerURL
-				s.cfg.GitHubOIDCIssuerURL = primary.IssuerURL
 				s.settings.GitHubOIDCAudience = primary.Audience
-				s.cfg.GitHubOIDCAudience = primary.Audience
 			}
 		}
 		if strings.TrimSpace(req.RepositoryTitle) != "" {
@@ -1219,11 +1517,25 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.AccessLogRetentionDays > 0 {
 			s.settings.AccessLogRetentionDays = req.AccessLogRetentionDays
-			s.cfg.AccessLogRetentionDays = req.AccessLogRetentionDays
 		}
 		if strings.TrimSpace(req.NewAdminPassword) != "" {
-			s.cfg.BootstrapAdminPassword = strings.TrimSpace(req.NewAdminPassword)
+			newAdminPass := strings.TrimSpace(req.NewAdminPassword)
+			if adminUser, err := s.store.GetLocalUser(r.Context(), s.cfg.BootstrapAdminUsername); err == nil && adminUser != nil {
+				if hash, hashErr := auth.HashSecret(newAdminPass); hashErr == nil {
+					now := time.Now().UTC()
+					adminUser.PasswordHash = hash
+					adminUser.PasswordChangedAt = &now
+					_ = s.store.UpsertLocalUser(r.Context(), adminUser)
+				}
+			}
 		}
+		s.authn.UpdateAuthConfig(
+			s.settings.BootstrapAdminOIDCGroup,
+			s.settings.GitHubOIDCEnabled,
+			s.settings.GitHubOIDCIssuerURL,
+			s.settings.GitHubOIDCAudience,
+			s.settings.JWTProviders,
+		)
 		s.settings.UpdatedBy = p.ID
 		s.settings.UpdatedAt = time.Now().UTC()
 		updated := s.settings
@@ -1260,7 +1572,10 @@ func detectContentType(key string) string {
 
 func extractClientIP(r *http.Request) string {
 	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+		candidate := strings.TrimSpace(strings.Split(xff, ",")[0])
+		if ip := net.ParseIP(candidate); ip != nil {
+			return ip.String()
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil && host != "" {

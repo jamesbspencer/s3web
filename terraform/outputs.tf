@@ -74,6 +74,17 @@ output "bootstrap_admin_password" {
   sensitive   = true
 }
 
+output "bootstrap_demo_username" {
+  description = "Generated demo local user account username."
+  value       = "demo"
+}
+
+output "bootstrap_demo_password" {
+  description = "Generated demo local user password for initial installation (retrieve with: terraform output -raw bootstrap_demo_password)."
+  value       = random_password.demo_password.result
+  sensitive   = true
+}
+
 output "bootstrap_service_account_secret" {
   description = "Generated default HTML Raw Access service account secret."
   value       = "s3w_${random_password.nexus_service_account_secret.result}"

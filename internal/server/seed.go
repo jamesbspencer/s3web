@@ -3,6 +3,10 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"time"
 
 	"s3web/internal/auth"
@@ -10,6 +14,95 @@ import (
 )
 
 func (s *Server) seedBootstrapData(ctx context.Context) error {
+	// Seed Default Admin (with randomly generated password on install) and Demo Local User Account
+	localUsers, err := s.store.ListLocalUsers(ctx)
+	if err != nil {
+		return err
+	}
+	if len(localUsers) == 0 {
+		adminUsername := s.cfg.BootstrapAdminUsername
+		if adminUsername == "" {
+			adminUsername = "admin"
+		}
+		if s.cfg.BootstrapAdminPassword == "" {
+			genAdminPass, genErr := auth.GenerateRandomPassword(20)
+			if genErr != nil {
+				return fmt.Errorf("generate admin password: %w", genErr)
+			}
+			s.cfg.BootstrapAdminPassword = genAdminPass
+		}
+		adminHash, err := auth.HashSecret(s.cfg.BootstrapAdminPassword)
+		if err != nil {
+			return fmt.Errorf("hash admin password: %w", err)
+		}
+		if err := s.store.UpsertLocalUser(ctx, &model.LocalUser{
+			Username:     adminUsername,
+			Email:        s.cfg.BootstrapAdminEmail,
+			DisplayName:  "Default Administrator",
+			PasswordHash: adminHash,
+			IsAdmin:      true,
+			Disabled:     false,
+			CreatedBy:    "system-install",
+		}); err != nil {
+			return fmt.Errorf("seed default admin local user: %w", err)
+		}
+
+		demoUsername := s.cfg.BootstrapDemoUsername
+		if demoUsername == "" {
+			demoUsername = "demo"
+		}
+		demoEmail := s.cfg.BootstrapDemoEmail
+		if demoEmail == "" {
+			demoEmail = "demo@example.com"
+		}
+		if s.cfg.BootstrapDemoPassword == "" {
+			genDemoPass, genErr := auth.GenerateRandomPassword(16)
+			if genErr != nil {
+				return fmt.Errorf("generate demo password: %w", genErr)
+			}
+			s.cfg.BootstrapDemoPassword = genDemoPass
+		}
+		demoHash, err := auth.HashSecret(s.cfg.BootstrapDemoPassword)
+		if err != nil {
+			return fmt.Errorf("hash demo password: %w", err)
+		}
+		if err := s.store.UpsertLocalUser(ctx, &model.LocalUser{
+			Username:     demoUsername,
+			Email:        demoEmail,
+			DisplayName:  "Demo Local User",
+			PasswordHash: demoHash,
+			IsAdmin:      false,
+			Disabled:     false,
+			CreatedBy:    "system-install",
+		}); err != nil {
+			return fmt.Errorf("seed demo local user: %w", err)
+		}
+
+		log.Printf("[s3web] Initial install local accounts created:")
+		log.Printf("  -> Default Admin Account: username=%s email=%s password=%s", adminUsername, s.cfg.BootstrapAdminEmail, s.cfg.BootstrapAdminPassword)
+		log.Printf("  -> Demo Local User Account: username=%s email=%s password=%s", demoUsername, demoEmail, s.cfg.BootstrapDemoPassword)
+
+		if s.cfg.LocalDataDir != "" {
+			credFile := filepath.Join(s.cfg.LocalDataDir, "bootstrap-credentials.txt")
+			credContent := fmt.Sprintf(
+				"s3web Initial Install Credentials (Generated at %s)\n"+
+					"====================================================================\n"+
+					"Default Admin Account:\n"+
+					"  Username: %s\n"+
+					"  Email:    %s\n"+
+					"  Password: %s\n\n"+
+					"Demo Local User Account:\n"+
+					"  Username: %s\n"+
+					"  Email:    %s\n"+
+					"  Password: %s\n",
+				time.Now().UTC().Format(time.RFC3339),
+				adminUsername, s.cfg.BootstrapAdminEmail, s.cfg.BootstrapAdminPassword,
+				demoUsername, demoEmail, s.cfg.BootstrapDemoPassword,
+			)
+			_ = os.WriteFile(credFile, []byte(credContent), 0o600)
+		}
+	}
+
 	grants, err := s.store.ListAccessGrants(ctx)
 	if err != nil {
 		return err

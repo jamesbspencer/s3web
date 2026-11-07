@@ -31,6 +31,12 @@ resource "random_password" "admin_password" {
   override_special = "!@#%^&*-_=+"
 }
 
+resource "random_password" "demo_password" {
+  length           = 20
+  special          = true
+  override_special = "!@#%^&*-_=+"
+}
+
 resource "random_password" "nexus_service_account_secret" {
   length  = 36
   special = false
@@ -46,6 +52,7 @@ resource "aws_secretsmanager_secret_version" "app_secrets" {
   secret_string = jsonencode({
     S3WEB_SESSION_SECRET           = random_password.session_secret.result
     S3WEB_BOOTSTRAP_ADMIN_PASSWORD = random_password.admin_password.result
+    S3WEB_BOOTSTRAP_DEMO_PASSWORD  = random_password.demo_password.result
     S3WEB_OIDC_CLIENT_SECRET       = "replace-with-oidc-client-secret-in-secrets-manager"
     S3WEB_BOOTSTRAP_NEXUS_SECRET   = "s3w_${random_password.nexus_service_account_secret.result}"
   })
@@ -414,6 +421,10 @@ resource "aws_ecs_task_definition" "s3web" {
         {
           name      = "S3WEB_BOOTSTRAP_ADMIN_PASSWORD"
           valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:S3WEB_BOOTSTRAP_ADMIN_PASSWORD::"
+        },
+        {
+          name      = "S3WEB_BOOTSTRAP_DEMO_PASSWORD"
+          valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:S3WEB_BOOTSTRAP_DEMO_PASSWORD::"
         },
         {
           name      = "S3WEB_OIDC_CLIENT_SECRET"

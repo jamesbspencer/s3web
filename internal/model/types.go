@@ -130,6 +130,7 @@ type DirectoryEntry struct {
 type PrincipalType string
 
 const (
+	PrincipalLocalUser      PrincipalType = "LOCAL_USER"
 	PrincipalSSOUser        PrincipalType = "SSO_USER"
 	PrincipalGitHubWorkflow PrincipalType = "GITHUB_WORKFLOW"
 	PrincipalServiceAccount PrincipalType = "SERVICE_ACCOUNT"
@@ -171,6 +172,7 @@ const (
 	SubjectOIDCGroup      SubjectType = "OIDC_GROUP"
 	SubjectAppGroup       SubjectType = "APP_GROUP"
 	SubjectSSOUser        SubjectType = "SSO_USER"
+	SubjectLocalUser      SubjectType = "LOCAL_USER"
 	SubjectGitHubWorkflow SubjectType = "GITHUB_WORKFLOW"
 	SubjectServiceAccount SubjectType = "SERVICE_ACCOUNT"
 )
@@ -199,6 +201,27 @@ type AppGroup struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// LocalUser represents a local user account managed inside s3web.
+type LocalUser struct {
+	Username          string     `json:"username"`
+	Email             string     `json:"email"`
+	DisplayName       string     `json:"display_name"`
+	PasswordHash      string     `json:"password_hash,omitempty"` // PBKDF2 hash stored at rest, stripped in API responses
+	IsAdmin           bool       `json:"is_admin"`
+	Disabled          bool       `json:"disabled"`
+	CreatedBy         string     `json:"created_by"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	PasswordChangedAt *time.Time `json:"password_changed_at,omitempty"`
+	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
+}
+
+// Sanitized returns a copy of LocalUser with PasswordHash removed for safe API serialization.
+func (u LocalUser) Sanitized() LocalUser {
+	u.PasswordHash = ""
+	return u
+}
+
 // ServiceAccount represents a machine identity for HTML Raw Access or automation scripts.
 type ServiceAccount struct {
 	AccountID   string     `json:"account_id"`
@@ -214,13 +237,15 @@ type ServiceAccount struct {
 
 // Principal represents the authenticated caller attached to the request context.
 type Principal struct {
-	Type          PrincipalType     `json:"type"`
-	ID            string            `json:"id"`
-	DisplayName   string            `json:"display_name"`
-	Email         string            `json:"email,omitempty"`
-	OIDCGroups    []string          `json:"oidc_groups,omitempty"`
-	AppGroups     []string          `json:"app_groups,omitempty"`
-	GitHubClaims  map[string]string `json:"github_claims,omitempty"` // e.g., repository, ref, environment, workflow_ref
+	Type          PrincipalType        `json:"type"`
+	ID            string               `json:"id"`
+	Username      string               `json:"username,omitempty"`
+	DisplayName   string               `json:"display_name"`
+	Email         string               `json:"email,omitempty"`
+	IsLocalAdmin  bool                 `json:"is_local_admin,omitempty"`
+	OIDCGroups    []string             `json:"oidc_groups,omitempty"`
+	AppGroups     []string             `json:"app_groups,omitempty"`
+	GitHubClaims  map[string]string    `json:"github_claims,omitempty"` // e.g., repository, ref, environment, workflow_ref
 	EffectivePerm EffectivePermissions `json:"effective_permissions"`
 }
 

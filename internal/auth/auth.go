@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"strings"
@@ -48,6 +49,16 @@ type Authenticator struct {
 	store     store.MetadataStore
 	evaluator *rbac.Evaluator
 
+	cfgMu               sync.RWMutex
+	adminOIDCGroup      string
+	githubOIDCEnabled   bool
+	githubOIDCIssuerURL string
+	githubOIDCAudience  string
+	jwtProviders        []model.JWTProviderConfig
+
+	credCacheMu sync.RWMutex
+	credCache   map[string]time.Time
+
 	jwksMu    sync.RWMutex
 	jwksKeys  map[string]*rsa.PublicKey
 	jwksFetch time.Time
@@ -56,15 +67,60 @@ type Authenticator struct {
 // NewAuthenticator creates a new Authenticator.
 func NewAuthenticator(cfg *config.Config, st store.MetadataStore, eval *rbac.Evaluator) *Authenticator {
 	a := &Authenticator{
-		cfg:       cfg,
-		store:     st,
-		evaluator: eval,
-		jwksKeys:  make(map[string]*rsa.PublicKey),
+		cfg:                 cfg,
+		store:               st,
+		evaluator:           eval,
+		adminOIDCGroup:      cfg.BootstrapAdminOIDCGroup,
+		githubOIDCEnabled:   cfg.GitHubOIDCEnabled,
+		githubOIDCIssuerURL: cfg.GitHubOIDCIssuerURL,
+		githubOIDCAudience:  cfg.GitHubOIDCAudience,
+		credCache:           make(map[string]time.Time),
+		jwksKeys:            make(map[string]*rsa.PublicKey),
 	}
 	if cfg.GitHubPinnedJWKSJSON != "" {
 		_ = a.loadJWKSFromJSON([]byte(cfg.GitHubPinnedJWKSJSON))
 	}
 	return a
+}
+
+// UpdateAuthConfig updates runtime-mutable OIDC and JWT configuration under a write lock.
+func (a *Authenticator) UpdateAuthConfig(
+	adminOIDCGroup string,
+	githubOIDCEnabled bool,
+	githubOIDCIssuerURL string,
+	githubOIDCAudience string,
+	jwtProviders []model.JWTProviderConfig,
+) {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if adminOIDCGroup != "" {
+		a.adminOIDCGroup = adminOIDCGroup
+	}
+	a.githubOIDCEnabled = githubOIDCEnabled
+	a.githubOIDCIssuerURL = githubOIDCIssuerURL
+	a.githubOIDCAudience = githubOIDCAudience
+	if len(jwtProviders) > 0 {
+		cp := make([]model.JWTProviderConfig, len(jwtProviders))
+		copy(cp, jwtProviders)
+		a.jwtProviders = cp
+	}
+}
+
+func (a *Authenticator) getAdminOIDCGroup() string {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	return a.adminOIDCGroup
+}
+
+func (a *Authenticator) getJWTConfig() (bool, string, string, []model.JWTProviderConfig) {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	var providers []model.JWTProviderConfig
+	if len(a.jwtProviders) > 0 {
+		providers = make([]model.JWTProviderConfig, len(a.jwtProviders))
+		copy(providers, a.jwtProviders)
+	}
+	return a.githubOIDCEnabled, a.githubOIDCIssuerURL, a.githubOIDCAudience, providers
 }
 
 // HashSecret hashes a service account secret with a random salt using SHA-256 HMAC iterations.
@@ -95,6 +151,38 @@ func VerifySecret(secret, encodedHash string) bool {
 	return hmac.Equal(actual, expected)
 }
 
+func (a *Authenticator) verifySecretCached(secret, encodedHash string) bool {
+	if secret == "" || encodedHash == "" {
+		return false
+	}
+	sum := sha256.Sum256([]byte(encodedHash + "\x00" + secret))
+	cacheKey := hex.EncodeToString(sum[:])
+	now := time.Now()
+
+	a.credCacheMu.RLock()
+	exp, ok := a.credCache[cacheKey]
+	a.credCacheMu.RUnlock()
+	if ok && now.Before(exp) {
+		return true
+	}
+
+	if !VerifySecret(secret, encodedHash) {
+		return false
+	}
+
+	a.credCacheMu.Lock()
+	if len(a.credCache) > 1024 {
+		for k, v := range a.credCache {
+			if now.After(v) {
+				delete(a.credCache, k)
+			}
+		}
+	}
+	a.credCache[cacheKey] = now.Add(60 * time.Second)
+	a.credCacheMu.Unlock()
+	return true
+}
+
 func deriveKey(password, salt []byte, iterations int) []byte {
 	mac := hmac.New(sha256.New, password)
 	mac.Write(salt)
@@ -122,23 +210,72 @@ func GenerateToken() (string, error) {
 	return "s3w_" + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// GenerateRandomPassword generates a cryptographically random password of the given length without modulo bias.
+func GenerateRandomPassword(length int) (string, error) {
+	if length < 12 {
+		length = 20
+	}
+	const charset = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#%^&*-_=+"
+	max := big.NewInt(int64(len(charset)))
+	out := make([]byte, length)
+	for i := 0; i < length; i++ {
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", err
+		}
+		out[i] = charset[n.Int64()]
+	}
+	return string(out), nil
+}
+
 type sessionPayload struct {
-	ID          string   `json:"id"`
-	Email       string   `json:"email"`
-	DisplayName string   `json:"name"`
-	OIDCGroups  []string `json:"groups"`
-	ExpiresAt   int64    `json:"exp"`
+	PrincipalType model.PrincipalType `json:"type,omitempty"`
+	Username      string              `json:"username,omitempty"`
+	ID            string              `json:"id"`
+	Email         string              `json:"email"`
+	DisplayName   string              `json:"name"`
+	OIDCGroups    []string            `json:"groups"`
+	IssuedAt      int64               `json:"iat"`
+	ExpiresAt     int64               `json:"exp"`
+}
+
+// IssueLocalSessionCookie signs and sets an HttpOnly session cookie for a local user account.
+func (a *Authenticator) IssueLocalSessionCookie(w http.ResponseWriter, user *model.LocalUser) error {
+	var groups []string
+	adminGrp := a.getAdminOIDCGroup()
+	if user.IsAdmin && adminGrp != "" {
+		groups = []string{adminGrp}
+	}
+	now := time.Now()
+	payload := sessionPayload{
+		PrincipalType: model.PrincipalLocalUser,
+		Username:      user.Username,
+		ID:            user.Username,
+		Email:         user.Email,
+		DisplayName:   user.DisplayName,
+		OIDCGroups:    groups,
+		IssuedAt:      now.Unix(),
+		ExpiresAt:     now.Add(12 * time.Hour).Unix(),
+	}
+	return a.writeSessionCookie(w, payload)
 }
 
 // IssueSessionCookie signs and sets an HttpOnly session cookie for an SSO user.
 func (a *Authenticator) IssueSessionCookie(w http.ResponseWriter, email, displayName string, oidcGroups []string) error {
+	now := time.Now()
 	payload := sessionPayload{
-		ID:          email,
-		Email:       email,
-		DisplayName: displayName,
-		OIDCGroups:  oidcGroups,
-		ExpiresAt:   time.Now().Add(12 * time.Hour).Unix(),
+		PrincipalType: model.PrincipalSSOUser,
+		ID:            email,
+		Email:         email,
+		DisplayName:   displayName,
+		OIDCGroups:    oidcGroups,
+		IssuedAt:      now.Unix(),
+		ExpiresAt:     now.Add(12 * time.Hour).Unix(),
 	}
+	return a.writeSessionCookie(w, payload)
+}
+
+func (a *Authenticator) writeSessionCookie(w http.ResponseWriter, payload sessionPayload) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -176,36 +313,44 @@ func (a *Authenticator) signString(data string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// AuthenticateAdminLogin verifies the bootstrap admin email/username and password.
-func (a *Authenticator) AuthenticateAdminLogin(username, password string) bool {
-	if !strings.EqualFold(strings.TrimSpace(username), a.cfg.BootstrapAdminEmail) &&
-		!strings.EqualFold(strings.TrimSpace(username), "admin") {
-		return false
+// AuthenticateLocalUser verifies a local user's username or email and password, ensuring the account is not disabled.
+func (a *Authenticator) AuthenticateLocalUser(ctx context.Context, usernameOrEmail, password string) (*model.LocalUser, error) {
+	usernameOrEmail = strings.TrimSpace(usernameOrEmail)
+	if usernameOrEmail == "" || password == "" {
+		return nil, errors.New("username and password are required")
 	}
-	if a.cfg.BootstrapAdminPassword == "" {
-		return false
+	user, err := a.store.GetLocalUser(ctx, usernameOrEmail)
+	if err != nil {
+		return nil, errors.New("invalid username or password")
 	}
-	return hmac.Equal([]byte(password), []byte(a.cfg.BootstrapAdminPassword))
+	if user.Disabled {
+		return nil, errors.New("local account is disabled")
+	}
+	if !a.verifySecretCached(password, user.PasswordHash) {
+		return nil, errors.New("invalid username or password")
+	}
+	now := time.Now().UTC()
+	user.LastLoginAt = &now
+	_ = a.store.TouchLocalUserLogin(ctx, user.Username, now)
+	return user, nil
 }
 
 // AuthenticateRequest inspects the HTTP request for:
-// 1. HTTP Basic Auth (Bootstrap Admin OR Service Account — e.g., HTML Raw Access / CLI)
+// 1. HTTP Basic Auth (Local User Account OR Service Account — e.g., HTML Raw Access / CLI)
 // 2. HTTP Bearer Token (Service Account "s3w_..." OR CI OIDC JWT "eyJ...")
-// 3. Encrypted Session Cookie (SSO / Admin User)
+// 3. Encrypted Session Cookie (Authenticated Local User or SSO User)
+// Anonymous access is strictly disabled.
 func (a *Authenticator) AuthenticateRequest(r *http.Request) (*model.Principal, error) {
 	ctx := r.Context()
 
-	// 1. Check HTTP Basic Auth (Bootstrap Admin OR HTML Raw Access / CLI Service Account)
+	// 1. Check HTTP Basic Auth (Local User Account OR HTML Raw Access / CLI Service Account)
 	if username, password, ok := r.BasicAuth(); ok && username != "" {
-		if a.AuthenticateAdminLogin(username, password) {
-			p := &model.Principal{
-				Type:        model.PrincipalSSOUser,
-				ID:          a.cfg.BootstrapAdminEmail,
-				Email:       a.cfg.BootstrapAdminEmail,
-				DisplayName: "Bootstrap Admin (" + a.cfg.BootstrapAdminEmail + ")",
-				OIDCGroups:  []string{a.cfg.BootstrapAdminOIDCGroup},
+		if existingUser, err := a.store.GetLocalUser(ctx, username); err == nil && existingUser != nil {
+			user, authErr := a.AuthenticateLocalUser(ctx, username, password)
+			if authErr != nil {
+				return nil, authErr
 			}
-			return a.enrichPrincipal(ctx, p)
+			return a.principalFromLocalUser(ctx, user)
 		}
 		return a.authenticateServiceAccount(ctx, username, password)
 	}
@@ -225,25 +370,35 @@ func (a *Authenticator) AuthenticateRequest(r *http.Request) (*model.Principal, 
 		}
 	}
 
-	// 3. Check Session Cookie (Human SSO User)
+	// 3. Check Session Cookie (Authenticated Local User or Human SSO User)
 	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
 		return a.authenticateSessionCookie(ctx, cookie.Value)
 	}
 
-	// 4. If OIDC SSO is not enabled yet (or in local mode), provide a default Bootstrap Admin session
-	// so the operator can immediately use the UI and switch personas in the header switcher.
-	if !a.cfg.OIDCEnabled || a.cfg.BackendMode == "local" {
-		p := &model.Principal{
-			Type:        model.PrincipalSSOUser,
-			ID:          a.cfg.BootstrapAdminEmail,
-			Email:       a.cfg.BootstrapAdminEmail,
-			DisplayName: "Bootstrap Admin (" + a.cfg.BootstrapAdminEmail + ")",
-			OIDCGroups:  []string{a.cfg.BootstrapAdminOIDCGroup},
-		}
-		return a.enrichPrincipal(ctx, p)
-	}
+	// Anonymous access is disabled.
+	return nil, errors.New("authentication required")
+}
 
-	return nil, errors.New("unauthenticated request")
+func (a *Authenticator) principalFromLocalUser(ctx context.Context, user *model.LocalUser) (*model.Principal, error) {
+	var oidcGroups []string
+	adminGrp := a.getAdminOIDCGroup()
+	if user.IsAdmin && adminGrp != "" {
+		oidcGroups = []string{adminGrp}
+	}
+	displayName := user.DisplayName
+	if displayName == "" {
+		displayName = user.Username
+	}
+	p := &model.Principal{
+		Type:         model.PrincipalLocalUser,
+		ID:           user.Username,
+		Username:     user.Username,
+		Email:        user.Email,
+		DisplayName:  displayName,
+		IsLocalAdmin: user.IsAdmin,
+		OIDCGroups:   oidcGroups,
+	}
+	return a.enrichPrincipal(ctx, p)
 }
 
 func (a *Authenticator) authenticateSessionCookie(ctx context.Context, cookieVal string) (*model.Principal, error) {
@@ -266,6 +421,27 @@ func (a *Authenticator) authenticateSessionCookie(ctx context.Context, cookieVal
 	if time.Now().Unix() > payload.ExpiresAt {
 		return nil, errors.New("session expired")
 	}
+	if payload.PrincipalType == model.PrincipalLocalUser || payload.Username != "" {
+		lookupKey := payload.Username
+		if lookupKey == "" {
+			lookupKey = payload.ID
+		}
+		user, err := a.store.GetLocalUser(ctx, lookupKey)
+		if err != nil {
+			return nil, errors.New("local account not found")
+		}
+		if user.Disabled {
+			return nil, errors.New("local account is disabled")
+		}
+		if user.PasswordChangedAt != nil && payload.IssuedAt > 0 && payload.IssuedAt < user.PasswordChangedAt.Unix() {
+			return nil, errors.New("session invalidated by password change")
+		}
+		return a.principalFromLocalUser(ctx, user)
+	}
+	// Also check if an SSO session matches a local user that has been disabled
+	if u, err := a.store.GetLocalUser(ctx, payload.Email); err == nil && u != nil && u.Disabled {
+		return nil, errors.New("local account is disabled")
+	}
 	p := &model.Principal{
 		Type:        model.PrincipalSSOUser,
 		ID:          payload.Email,
@@ -287,12 +463,11 @@ func (a *Authenticator) authenticateServiceAccount(ctx context.Context, accountI
 	if sa.ExpiresAt != nil && time.Now().After(*sa.ExpiresAt) {
 		return nil, errors.New("service account has expired")
 	}
-	if !VerifySecret(secret, sa.SecretHash) {
+	if !a.verifySecretCached(secret, sa.SecretHash) {
 		return nil, errors.New("invalid service account secret")
 	}
 	now := time.Now().UTC()
-	sa.LastUsedAt = &now
-	_ = a.store.UpsertServiceAccount(ctx, sa)
+	_ = a.store.TouchServiceAccountUsed(ctx, sa.AccountID, now)
 
 	p := &model.Principal{
 		Type:        model.PrincipalServiceAccount,
@@ -306,8 +481,9 @@ func (a *Authenticator) authenticateServiceAccount(ctx context.Context, accountI
 // Supports both RS256 JWKS verification (from GitHub OIDC or pinned JWKS in private VPCs)
 // and HS256 signed workflow tokens (for local/integration testing).
 func (a *Authenticator) authenticateGitHubOIDCJWT(ctx context.Context, token string) (*model.Principal, error) {
-	if !a.cfg.GitHubOIDCEnabled {
-		return nil, errors.New("GitHub OIDC authentication is disabled")
+	ghEnabled, ghIssuer, ghAudience, jwtProviders := a.getJWTConfig()
+	if !ghEnabled {
+		return nil, errors.New("CI OIDC JWT authentication is disabled")
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -343,7 +519,7 @@ func (a *Authenticator) authenticateGitHubOIDCJWT(ctx context.Context, token str
 
 	switch hdr.Alg {
 	case "RS256":
-		pubKey, err := a.getJWKSKey(ctx, hdr.Kid)
+		pubKey, err := a.getJWKSKey(ctx, hdr.Kid, ghIssuer)
 		if err != nil {
 			return nil, fmt.Errorf("JWKS key lookup failed: %w", err)
 		}
@@ -361,11 +537,19 @@ func (a *Authenticator) authenticateGitHubOIDCJWT(ctx context.Context, token str
 		return nil, fmt.Errorf("unsupported JWT algorithm: %s", hdr.Alg)
 	}
 
-	// Verify exp
-	if expVal, ok := claims["exp"].(float64); ok {
-		if time.Now().Unix() > int64(expVal) {
-			return nil, errors.New("GitHub OIDC JWT has expired")
-		}
+	// Require exp claim and verify token has not expired
+	expVal, hasExp := claims["exp"].(float64)
+	if !hasExp || time.Now().Unix() > int64(expVal) {
+		return nil, errors.New("CI OIDC JWT is missing exp or has expired")
+	}
+	if nbfVal, hasNbf := claims["nbf"].(float64); hasNbf && time.Now().Unix() < int64(nbfVal)-60 {
+		return nil, errors.New("CI OIDC JWT is not yet valid (nbf)")
+	}
+
+	// Validate iss and aud against configured JWT providers (or primary GitHub OIDC config)
+	iss, _ := claims["iss"].(string)
+	if !validateJWTIssuerAndAudience(iss, claims["aud"], ghIssuer, ghAudience, jwtProviders) {
+		return nil, errors.New("CI OIDC JWT issuer or audience does not match configured trust providers")
 	}
 
 	repo, _ := claims["repository"].(string)
@@ -404,12 +588,72 @@ func (a *Authenticator) authenticateGitHubOIDCJWT(ctx context.Context, token str
 	return a.enrichPrincipal(ctx, p)
 }
 
-func (a *Authenticator) enrichPrincipal(ctx context.Context, p *model.Principal) (*model.Principal, error) {
-	if p.Type == model.PrincipalSSOUser && p.Email != "" {
-		appGroups, err := a.store.GetUserAppGroups(ctx, p.Email)
-		if err == nil {
-			p.AppGroups = appGroups
+func validateJWTIssuerAndAudience(
+	tokenIss string,
+	rawAud interface{},
+	defaultIssuer string,
+	defaultAudience string,
+	providers []model.JWTProviderConfig,
+) bool {
+	normIss := strings.TrimRight(strings.TrimSpace(tokenIss), "/")
+	if len(providers) == 0 {
+		providers = []model.JWTProviderConfig{
+			{
+				Enabled:   true,
+				IssuerURL: defaultIssuer,
+				Audience:  defaultAudience,
+			},
 		}
+	}
+	for _, prov := range providers {
+		if !prov.Enabled {
+			continue
+		}
+		expectedIss := strings.TrimRight(strings.TrimSpace(prov.IssuerURL), "/")
+		if expectedIss != "" && !strings.EqualFold(normIss, expectedIss) {
+			continue
+		}
+		expectedAud := strings.TrimRight(strings.TrimSpace(prov.Audience), "/")
+		if expectedAud != "" && !audienceClaimMatches(rawAud, expectedAud) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func audienceClaimMatches(rawAud interface{}, expectedAud string) bool {
+	switch v := rawAud.(type) {
+	case string:
+		return strings.EqualFold(strings.TrimRight(strings.TrimSpace(v), "/"), expectedAud)
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.EqualFold(strings.TrimRight(strings.TrimSpace(s), "/"), expectedAud) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (a *Authenticator) enrichPrincipal(ctx context.Context, p *model.Principal) (*model.Principal, error) {
+	if p.Type == model.PrincipalSSOUser || p.Type == model.PrincipalLocalUser {
+		groupSet := make(map[string]struct{})
+		var merged []string
+		for _, id := range []string{p.Email, p.Username, p.ID} {
+			if id == "" {
+				continue
+			}
+			if groups, err := a.store.GetUserAppGroups(ctx, id); err == nil {
+				for _, g := range groups {
+					if _, exists := groupSet[g]; !exists {
+						groupSet[g] = struct{}{}
+						merged = append(merged, g)
+					}
+				}
+			}
+		}
+		p.AppGroups = merged
 	}
 	perm, err := a.evaluator.Resolve(ctx, p, "")
 	if err != nil {
@@ -421,10 +665,11 @@ func (a *Authenticator) enrichPrincipal(ctx context.Context, p *model.Principal)
 
 // MintTestGitHubJWT creates a signed GitHub Actions OIDC JWT for testing workflow authentication.
 func (a *Authenticator) MintTestGitHubJWT(repository, ref, environment, actor string) (string, error) {
+	_, ghIssuer, ghAudience, _ := a.getJWTConfig()
 	hdr := map[string]string{"alg": "HS256", "typ": "JWT"}
 	claims := map[string]interface{}{
-		"iss":          a.cfg.GitHubOIDCIssuerURL,
-		"aud":          a.cfg.GitHubOIDCAudience,
+		"iss":          ghIssuer,
+		"aud":          ghAudience,
 		"sub":          fmt.Sprintf("repo:%s:ref:%s", repository, ref),
 		"repository":   repository,
 		"ref":          ref,
@@ -481,7 +726,7 @@ func (a *Authenticator) loadJWKSFromJSON(raw []byte) error {
 	return nil
 }
 
-func (a *Authenticator) getJWKSKey(ctx context.Context, kid string) (*rsa.PublicKey, error) {
+func (a *Authenticator) getJWKSKey(ctx context.Context, kid string, issuerURL string) (*rsa.PublicKey, error) {
 	a.jwksMu.RLock()
 	key, ok := a.jwksKeys[kid]
 	fresh := time.Since(a.jwksFetch) < 1*time.Hour
@@ -490,7 +735,7 @@ func (a *Authenticator) getJWKSKey(ctx context.Context, kid string) (*rsa.Public
 		return key, nil
 	}
 
-	jwksURL := strings.TrimRight(a.cfg.GitHubOIDCIssuerURL, "/") + "/.well-known/jwks"
+	jwksURL := strings.TrimRight(issuerURL, "/") + "/.well-known/jwks"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, nil)
 	if err != nil {
 		return nil, err
@@ -505,10 +750,17 @@ func (a *Authenticator) getJWKSKey(ctx context.Context, kid string) (*rsa.Public
 	}
 	defer resp.Body.Close()
 
-	var buf []byte
-	buf = make([]byte, 64*1024)
-	n, _ := resp.Body.Read(buf)
-	if err := a.loadJWKSFromJSON(buf[:n]); err != nil {
+	if resp.StatusCode != http.StatusOK {
+		if ok {
+			return key, nil
+		}
+		return nil, fmt.Errorf("JWKS endpoint returned status %d", resp.StatusCode)
+	}
+	rawBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if readErr != nil {
+		return nil, readErr
+	}
+	if err := a.loadJWKSFromJSON(rawBody); err != nil {
 		return nil, err
 	}
 
@@ -519,4 +771,3 @@ func (a *Authenticator) getJWKSKey(ctx context.Context, kid string) (*rsa.Public
 	}
 	return nil, fmt.Errorf("kid %q not found in JWKS", kid)
 }
-

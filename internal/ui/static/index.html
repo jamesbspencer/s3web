@@ -577,12 +577,9 @@
 
     <div class="user-controls">
       <div id="effectivePermBadges" style="display:flex; gap:4px;"></div>
-      <select id="personaSelect" onchange="switchPersona(this.value)" title="Simulate SSO User / Group Persona">
-        <option value="admin">SSO: admin@example.com (platform-admins)</option>
-        <option value="releng">SSO: rel-eng@example.com (release-engineering: Upload Only)</option>
-        <option value="curator">SSO: curator@example.com (App Group iso-curators: Upload+Delete)</option>
-        <option value="viewer">SSO: viewer@example.com (Default Read-Only)</option>
-      </select>
+      <span id="currentUserBadge" class="bucket-pill" style="display:none;"></span>
+      <button class="btn btn-sm" id="changeOwnPasswordBtn" onclick="openChangeOwnPasswordModal()" style="display:none;" title="Update your local account password">Change Password</button>
+      <button class="btn btn-sm" id="logoutBtn" onclick="submitLogout()" style="display:none;" title="Sign out">Sign Out</button>
       <button class="btn" id="tabSettingsBtn" onclick="switchTab('settings')" title="Settings" aria-label="Settings" style="padding:7px 9px;">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
@@ -591,6 +588,29 @@
       </button>
     </div>
   </header>
+
+  <!-- Full-Screen Authentication Gate (Anonymous Access Disabled) -->
+  <div id="loginOverlay" style="position:fixed; inset:0; background:rgba(11,15,25,0.96); z-index:250; display:none; align-items:center; justify-content:center; padding:24px;">
+    <div class="card" style="width:100%; max-width:440px; padding:28px; display:flex; flex-direction:column; gap:16px; border-color:var(--border-subtle); box-shadow:0 20px 50px rgba(0,0,0,0.75);">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <img src="/logo.png" alt="Logo" style="height:42px; width:auto; border-radius:6px; object-fit:contain;" />
+        <div>
+          <h3 style="font-size:16px;">Sign In to s3web</h3>
+          <p style="font-size:12px; color:var(--text-muted);">Anonymous access is disabled. Sign in with a local account.</p>
+        </div>
+      </div>
+      <div id="loginErrorBox" style="display:none; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; padding:10px 12px; border-radius:6px; font-size:12.5px;"></div>
+      <div class="form-group">
+        <label>Username or Email</label>
+        <input type="text" id="loginUsernameInput" placeholder="admin or demo" autocomplete="username" onkeydown="if(event.key==='Enter') submitLogin()" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="loginPasswordInput" placeholder="Enter password..." autocomplete="current-password" onkeydown="if(event.key==='Enter') submitLogin()" />
+      </div>
+      <button class="btn btn-primary" style="justify-content:center; padding:10px;" onclick="submitLogin()">Sign In</button>
+    </div>
+  </div>
 
   <!-- View Switcher Tabs -->
   <nav class="nav-tabs">
@@ -667,6 +687,9 @@
         <button class="settings-tab active" id="settingsTabBtn-buckets" onclick="switchSettingsCategory('buckets')">
           S3 Buckets &amp; Tree View
         </button>
+        <button class="settings-tab" id="settingsTabBtn-local-users" onclick="switchSettingsCategory('local-users')">
+          Local Accounts
+        </button>
         <button class="settings-tab" id="settingsTabBtn-permissions" onclick="switchSettingsCategory('permissions')">
           In-App Permissions &amp; RBAC
         </button>
@@ -685,6 +708,36 @@
         <button class="settings-tab" id="settingsTabBtn-security" onclick="switchSettingsCategory('security')">
           HTML Raw Access &amp; Security
         </button>
+      </div>
+
+      <!-- CATEGORY: LOCAL ACCOUNTS -->
+      <div id="settingsPane-local-users" style="display:none;">
+        <div class="toolbar">
+          <div>
+            <h4 style="font-size:14px; color:var(--accent);">Local User Accounts</h4>
+            <p style="font-size:12px; color:var(--text-muted);">Manage local user accounts (including the default <code>admin</code> and <code>demo</code> accounts). Administrators can reset passwords or disable any or all local accounts.</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-primary" onclick="openCreateLocalUserModal()">+ Create Local Account</button>
+            <button class="btn" onclick="toggleAllLocalUsers(false)">Enable All Local Accounts</button>
+            <button class="btn btn-danger" onclick="toggleAllLocalUsers(true)">Disable All Local Accounts</button>
+          </div>
+        </div>
+        <div class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Display Name &amp; Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Last Login (UTC)</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="localUsersTableBody"></tbody>
+          </table>
+        </div>
       </div>
 
       <!-- CATEGORY 1: S3 BUCKETS & TREE VIEW -->
@@ -1079,6 +1132,7 @@
           <option value="OIDC_GROUP">OIDC_GROUP (SSO IdP Group Claim)</option>
           <option value="APP_GROUP">APP_GROUP (In-App Managed Group)</option>
           <option value="SSO_USER">SSO_USER (Individual User Email)</option>
+          <option value="LOCAL_USER">LOCAL_USER (Local Account Username / Email)</option>
           <option value="GITHUB_WORKFLOW">GITHUB_WORKFLOW (GitHub OIDC Claim Pattern)</option>
           <option value="SERVICE_ACCOUNT">SERVICE_ACCOUNT (Machine Account ID)</option>
         </select>
@@ -1155,6 +1209,76 @@
       <div style="display:flex; justify-content:flex-end; gap:8px;">
         <button class="btn" onclick="closeModals()">Cancel</button>
         <button class="btn btn-primary" onclick="submitServiceAccount()">Generate Credentials</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Self-Service Change Own Password Modal -->
+  <div class="modal-backdrop" id="changeOwnPasswordModal">
+    <div class="modal">
+      <h3>Update My Local Account Password</h3>
+      <p style="font-size:12px; color:var(--text-muted);">Enter your current password and choose a new password (minimum 6 characters).</p>
+      <div class="form-group">
+        <label>Current Password</label>
+        <input type="password" id="ownCurrentPassword" placeholder="Enter current password..." autocomplete="current-password" />
+      </div>
+      <div class="form-group">
+        <label>New Password</label>
+        <input type="password" id="ownNewPassword" placeholder="Enter new password..." autocomplete="new-password" />
+      </div>
+      <div class="form-group">
+        <label>Confirm New Password</label>
+        <input type="password" id="ownConfirmPassword" placeholder="Confirm new password..." autocomplete="new-password" />
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn" onclick="closeModals()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitChangeOwnPassword()">Update Password</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin: Create Local User Modal -->
+  <div class="modal-backdrop" id="createLocalUserModal">
+    <div class="modal">
+      <h3>Create Local User Account</h3>
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="newLocalUsername" placeholder="e.g. jdoe" />
+      </div>
+      <div class="form-group">
+        <label>Display Name</label>
+        <input type="text" id="newLocalDisplayName" placeholder="e.g. Jane Doe" />
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="newLocalEmail" placeholder="e.g. jdoe@example.com" />
+      </div>
+      <div class="form-group">
+        <label>Initial Password</label>
+        <input type="password" id="newLocalPassword" placeholder="Minimum 6 characters..." autocomplete="new-password" />
+      </div>
+      <div class="checkbox-row">
+        <label><input type="checkbox" id="newLocalIsAdmin" /> Grant Full Administrator Privileges</label>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn" onclick="closeModals()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCreateLocalUser()">Create Local Account</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin: Change Password of Any Local Account Modal -->
+  <div class="modal-backdrop" id="adminChangePasswordModal">
+    <div class="modal">
+      <h3>Change Password for Local Account: <span id="adminTargetUsernameLabel" class="mono" style="color:var(--accent);"></span></h3>
+      <input type="hidden" id="adminTargetUsername" />
+      <div class="form-group">
+        <label>New Password</label>
+        <input type="password" id="adminNewUserPassword" placeholder="Enter new password (min 6 characters)..." autocomplete="new-password" />
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn" onclick="closeModals()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAdminChangeUserPassword()">Set New Password</button>
       </div>
     </div>
   </div>
@@ -1285,7 +1409,8 @@
     }
 
     async function init() {
-      await refreshMe();
+      const ok = await refreshMe();
+      if (!ok) return;
       await loadSettings();
       await loadDirectory("");
     }
@@ -1314,11 +1439,120 @@
       return h.substring(0, 12) + "…";
     }
 
+    function showLoginOverlay(errMsg) {
+      const overlay = document.getElementById("loginOverlay");
+      if (overlay) overlay.style.display = "flex";
+      const errBox = document.getElementById("loginErrorBox");
+      if (errBox) {
+        if (errMsg) {
+          errBox.textContent = errMsg;
+          errBox.style.display = "block";
+        } else {
+          errBox.style.display = "none";
+        }
+      }
+      document.getElementById("currentUserBadge").style.display = "none";
+      document.getElementById("changeOwnPasswordBtn").style.display = "none";
+      document.getElementById("logoutBtn").style.display = "none";
+      document.getElementById("effectivePermBadges").innerHTML = "";
+    }
+
+    function hideLoginOverlay() {
+      const overlay = document.getElementById("loginOverlay");
+      if (overlay) overlay.style.display = "none";
+      const errBox = document.getElementById("loginErrorBox");
+      if (errBox) errBox.style.display = "none";
+    }
+
+    async function submitLogin() {
+      const username = document.getElementById("loginUsernameInput").value.trim();
+      const password = document.getElementById("loginPasswordInput").value;
+      if (!username || !password) {
+        showLoginOverlay("Please enter both username/email and password.");
+        return;
+      }
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showLoginOverlay(err.error || "Invalid username or password");
+        return;
+      }
+      document.getElementById("loginPasswordInput").value = "";
+      hideLoginOverlay();
+      await init();
+      showToast(`Signed in as ${username}`);
+    }
+
+    async function submitLogout() {
+      await fetch("/auth/logout", {
+        method: "POST",
+        headers: { "Accept": "application/json" }
+      });
+      currentMe = null;
+      showLoginOverlay();
+      showToast("Signed out");
+    }
+
+    function openChangeOwnPasswordModal() {
+      document.getElementById("ownCurrentPassword").value = "";
+      document.getElementById("ownNewPassword").value = "";
+      document.getElementById("ownConfirmPassword").value = "";
+      document.getElementById("changeOwnPasswordModal").classList.add("open");
+    }
+
+    async function submitChangeOwnPassword() {
+      const current_password = document.getElementById("ownCurrentPassword").value;
+      const new_password = document.getElementById("ownNewPassword").value;
+      const confirm_password = document.getElementById("ownConfirmPassword").value;
+      if (!current_password || !new_password) {
+        showToast("Please enter current and new passwords");
+        return;
+      }
+      if (new_password !== confirm_password) {
+        showToast("New passwords do not match");
+        return;
+      }
+      const res = await fetch("/api/v1/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password, new_password })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || "Failed to update password");
+        return;
+      }
+      closeModals();
+      showToast("Your password has been updated!");
+    }
+
+    function escapeHtml(val) {
+      return String(val == null ? "" : val)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function escapeJsAttr(val) {
+      return escapeHtml(String(val == null ? "" : val).replace(/\\/g, "\\\\").replace(/'/g, "\\'"));
+    }
+
     async function refreshMe() {
       const res = await fetch(`/api/v1/me?prefix=${encodeURIComponent(currentPrefix)}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        showLoginOverlay();
+        return false;
+      }
+      hideLoginOverlay();
       currentMe = await res.json();
 
+      const p = currentMe.principal || {};
       const perm = currentMe.effective_permissions || {};
       const badgesEl = document.getElementById("effectivePermBadges");
       badgesEl.innerHTML = `
@@ -1327,25 +1561,28 @@
         <span class="perm-badge ${perm.can_delete ? 'perm-on' : 'perm-off'}">Delete</span>
         ${perm.is_admin ? '<span class="perm-badge perm-on">Admin</span>' : ''}
       `;
+      const userBadge = document.getElementById("currentUserBadge");
+      if (userBadge) {
+        userBadge.textContent = `${p.username || p.id || p.email} (${p.type === 'LOCAL_USER' ? 'Local' : p.type || 'User'})`;
+        userBadge.style.display = "inline-flex";
+      }
+      const changePassBtn = document.getElementById("changeOwnPasswordBtn");
+      if (changePassBtn) {
+        changePassBtn.style.display = (p.type === "LOCAL_USER") ? "inline-flex" : "none";
+      }
+      const logoutBtn = document.getElementById("logoutBtn");
+      if (logoutBtn) {
+        logoutBtn.style.display = "inline-flex";
+      }
+      const settingsTabBtn = document.getElementById("tabSettingsBtn");
+      if (settingsTabBtn) {
+        settingsTabBtn.style.display = perm.is_admin ? "inline-flex" : "none";
+      }
+      if (!perm.is_admin && document.getElementById("viewSettings").style.display === "block") {
+        switchTab("browser");
+      }
       document.getElementById("uploadBtn").style.display = perm.can_upload ? "inline-flex" : "none";
-    }
-
-    async function switchPersona(persona) {
-      const presets = {
-        admin:   { email: "admin@example.com", name: "Alice Admin", oidc_groups: ["platform-admins"] },
-        releng:  { email: "rel-eng@example.com", name: "Bob ReleaseEng", oidc_groups: ["release-engineering"] },
-        curator: { email: "curator@example.com", name: "Carol Curator", oidc_groups: [] },
-        viewer:  { email: "viewer@example.com", name: "Dan Viewer (Read-Only)", oidc_groups: ["employees"] }
-      };
-      const body = presets[persona] || presets.viewer;
-      await fetch("/api/v1/auth/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      await refreshMe();
-      await loadDirectory(currentPrefix);
-      showToast(`Switched SSO session to ${body.email}`);
+      return true;
     }
 
     let currentSettingsCategory = "buckets";
@@ -1354,7 +1591,7 @@
 
     function switchSettingsCategory(cat) {
       currentSettingsCategory = cat || "buckets";
-      const categories = ["buckets", "permissions", "sso", "jwt", "service-accounts", "storage", "security"];
+      const categories = ["buckets", "local-users", "permissions", "sso", "jwt", "service-accounts", "storage", "security"];
       for (const c of categories) {
         const pane = document.getElementById(`settingsPane-${c}`);
         const btn = document.getElementById(`settingsTabBtn-${c}`);
@@ -1363,10 +1600,12 @@
       }
       const saveActions = document.getElementById("settingsSaveToolbarActions");
       if (saveActions) {
-        const modalManaged = (currentSettingsCategory === "permissions" || currentSettingsCategory === "service-accounts");
+        const modalManaged = (currentSettingsCategory === "local-users" || currentSettingsCategory === "permissions" || currentSettingsCategory === "service-accounts");
         saveActions.style.display = modalManaged ? "none" : "inline-flex";
       }
-      if (currentSettingsCategory === "permissions") {
+      if (currentSettingsCategory === "local-users") {
+        loadLocalUsers();
+      } else if (currentSettingsCategory === "permissions") {
         loadGrants();
         loadAppGroups();
       } else if (currentSettingsCategory === "service-accounts") {
@@ -1375,7 +1614,7 @@
     }
 
     function switchTab(tab) {
-      if (tab === "permissions" || tab === "service-accounts" || tab === "sso" || tab === "jwt") {
+      if (tab === "local-users" || tab === "permissions" || tab === "service-accounts" || tab === "sso" || tab === "jwt") {
         switchTab("settings");
         switchSettingsCategory(tab);
         return;
@@ -1388,6 +1627,7 @@
 
       if (tab === "settings") {
         loadSettings();
+        loadLocalUsers();
         loadGrants();
         loadAppGroups();
         loadServiceAccounts();
@@ -1724,7 +1964,7 @@
       let acc = "";
       for (const p of parts) {
         acc += p + "/";
-        html += `<span class="crumb-sep">/</span><span class="crumb" onclick="selectTreePrefix('${acc}')">${p}</span>`;
+        html += `<span class="crumb-sep">/</span><span class="crumb" onclick="selectTreePrefix('${escapeJsAttr(acc)}')">${escapeHtml(p)}</span>`;
       }
       container.innerHTML = html;
       const rawRel = parts.length > 1 ? parts.slice(1).join("/") + "/" : "";
@@ -1911,35 +2151,37 @@
       function renderFileRow(e) {
         const isArchived = (e.intelligent_tier === "AA" || e.intelligent_tier === "DAA") && e.restore_status !== "RESTORED";
         const lastAcc = e.last_accessed_at ? new Date(e.last_accessed_at).toISOString().replace("T", " ").substring(0, 19) : "--";
+        const safeKeyAttr = escapeJsAttr(e.key);
+        const safeTier = escapeHtml(e.intelligent_tier);
         rows += `
           <tr class="tree-file-row">
             <td>
               <div class="tree-cell">
                 ${renderIndentGuides(e.depth)}
                 <span style="display:inline-block; width:18px;"></span>
-                <span style="cursor:pointer; font-weight:600; color:var(--text-main);" onclick="openItemDrawer('${e.key}')" title="${e.key}">
-                  &#128191; ${e.displayName}
+                <span style="cursor:pointer; font-weight:600; color:var(--text-main);" onclick="openItemDrawer('${safeKeyAttr}')" title="${escapeHtml(e.key)}">
+                  &#128191; ${escapeHtml(e.displayName)}
                 </span>
               </div>
             </td>
             <td class="mono">${formatBytes(e.size)}</td>
             <td>
-              <span class="badge tier-${e.intelligent_tier} tier-hover-trigger"
-                    onmouseenter="showTierTooltip(event, '${e.intelligent_tier}')"
+              <span class="badge tier-${safeTier} tier-hover-trigger"
+                    onmouseenter="showTierTooltip(event, '${escapeJsAttr(e.intelligent_tier)}')"
                     onmousemove="moveTierTooltip(event)"
                     onmouseleave="hideTierTooltip()">
-                ${e.tier_label || e.intelligent_tier} <span class="tier-info-icon" style="border-color:currentColor; color:inherit; background:transparent;">?</span>
+                ${escapeHtml(e.tier_label || e.intelligent_tier)} <span class="tier-info-icon" style="border-color:currentColor; color:inherit; background:transparent;">?</span>
               </span>
             </td>
             <td class="mono" style="color:var(--text-muted);">${lastAcc}</td>
             <td>
               <div style="display:flex; gap:6px;">
                 ${isArchived
-                  ? `<button class="btn btn-sm btn-primary" onclick="openItemDrawer('${e.key}')">Restore</button>`
-                  : `<a class="btn btn-sm" href="/api/v1/objects/${e.key}/download">Download</a>`
+                  ? `<button class="btn btn-sm btn-primary" onclick="openItemDrawer('${safeKeyAttr}')">Restore</button>`
+                  : `<a class="btn btn-sm" href="/api/v1/objects/${encodeURI(e.key)}/download">Download</a>`
                 }
-                <button class="btn btn-sm" onclick="openItemDrawer('${e.key}')">Details</button>
-                ${perm && perm.can_delete ? `<button class="btn btn-sm btn-danger" onclick="deleteObject('${e.key}')">Delete</button>` : ''}
+                <button class="btn btn-sm" onclick="openItemDrawer('${safeKeyAttr}')">Details</button>
+                ${perm && perm.can_delete ? `<button class="btn btn-sm btn-danger" onclick="deleteObject('${safeKeyAttr}')">Delete</button>` : ''}
               </div>
             </td>
           </tr>`;
@@ -1955,18 +2197,19 @@
           const chevron = isCollapsed ? "&#9656;" : "&#9662;";
           const folderIcon = dir.isBucketRoot ? "&#128452;" : (isCollapsed ? "&#128193;" : "&#128194;");
           const typeDesc = dir.isBucketRoot
-            ? `<span style="color:var(--accent); font-size:12px; font-weight:600;" title="s3://${dir.bucketName} (${dir.bucketRegion || 'us-east-1'})">S3 Bucket</span>`
-            : `<span style="color:var(--text-dim); font-size:12px;">Folder (${dir.rawPrefix || dir.prefix})</span>`;
-          const rawHref = `/raw/${dir.rawPrefix || ''}`;
+            ? `<span style="color:var(--accent); font-size:12px; font-weight:600;" title="s3://${escapeHtml(dir.bucketName)} (${escapeHtml(dir.bucketRegion || 'us-east-1')})">S3 Bucket</span>`
+            : `<span style="color:var(--text-dim); font-size:12px;">Folder (${escapeHtml(dir.rawPrefix || dir.prefix)})</span>`;
+          const rawHref = `/raw/${encodeURI(dir.rawPrefix || '')}`;
+          const safePrefixAttr = escapeJsAttr(dir.prefix);
 
           rows += `
             <tr class="tree-folder-row">
               <td>
                 <div class="tree-cell">
                   ${renderIndentGuides(dir.depth)}
-                  <span class="tree-toggle" onclick="toggleTreeFolder('${dir.prefix}')" title="${isCollapsed ? 'Expand folder' : 'Collapse folder'}">${chevron}</span>
-                  <span class="tree-folder-label" onclick="toggleTreeFolder('${dir.prefix}')">
-                    ${folderIcon} ${dir.name}/
+                  <span class="tree-toggle" onclick="toggleTreeFolder('${safePrefixAttr}')" title="${isCollapsed ? 'Expand folder' : 'Collapse folder'}">${chevron}</span>
+                  <span class="tree-folder-label" onclick="toggleTreeFolder('${safePrefixAttr}')">
+                    ${folderIcon} ${escapeHtml(dir.name)}/
                   </span>
                   <span class="tree-folder-meta">(${dir.totalFiles} artifact${dir.totalFiles === 1 ? '' : 's'})</span>
                 </div>
@@ -1975,7 +2218,7 @@
               <td>${typeDesc}</td>
               <td class="mono">--</td>
               <td>
-                <a class="btn btn-sm" href="${rawHref}" target="_blank">HTML Index</a>
+                <a class="btn btn-sm" href="${escapeHtml(rawHref)}" target="_blank">HTML Index</a>
               </td>
             </tr>`;
 
@@ -2018,11 +2261,11 @@
 
       document.getElementById("drawerMetaGrid").innerHTML = `
         <div class="meta-item"><label>Size</label><div class="mono">${formatBytes(meta.size)} (${meta.size.toLocaleString()} B)</div></div>
-        <div class="meta-item"><label>Intelligent-Tiering</label><div><span class="badge tier-${meta.intelligent_tier} tier-hover-trigger" onmouseenter="showTierTooltip(event, '${meta.intelligent_tier}')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">${meta.tier_label} <span class="tier-info-icon" style="border-color:currentColor; color:inherit; background:transparent;">?</span></span></div></div>
-        <div class="meta-item"><label>Uploaded By</label><div class="mono">${meta.uploaded_by || 'system'}</div></div>
+        <div class="meta-item"><label>Intelligent-Tiering</label><div><span class="badge tier-${escapeHtml(meta.intelligent_tier)} tier-hover-trigger" onmouseenter="showTierTooltip(event, '${escapeJsAttr(meta.intelligent_tier)}')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">${escapeHtml(meta.tier_label)} <span class="tier-info-icon" style="border-color:currentColor; color:inherit; background:transparent;">?</span></span></div></div>
+        <div class="meta-item"><label>Uploaded By</label><div class="mono">${escapeHtml(meta.uploaded_by || 'system')}</div></div>
         <div class="meta-item"><label>Total Downloads</label><div class="mono">${meta.download_count || 0}</div></div>
         <div class="meta-item"><label>Last Accessed</label><div class="mono">${new Date(meta.last_accessed_at).toISOString().replace('T',' ').substring(0,19)} UTC</div></div>
-        <div class="meta-item"><label>Content-Type</label><div class="mono">${meta.content_type}</div></div>
+        <div class="meta-item"><label>Content-Type</label><div class="mono">${escapeHtml(meta.content_type)}</div></div>
       `;
 
       document.getElementById("itemDrawerBackdrop").classList.add("open");
@@ -2048,10 +2291,10 @@
       tbody.innerHTML = logs.map(l => `
         <tr>
           <td class="mono">${new Date(l.timestamp).toISOString().replace('T', ' ').substring(0, 19)}</td>
-          <td class="mono" style="color:var(--accent);">${l.principal_id}</td>
-          <td><span class="perm-badge perm-off">${l.principal_type}</span></td>
-          <td><span class="perm-badge ${l.action === 'DELETE' ? 'btn-danger' : 'perm-on'}">${l.action}</span></td>
-          <td class="mono">${l.client_ip}</td>
+          <td class="mono" style="color:var(--accent);">${escapeHtml(l.principal_id)}</td>
+          <td><span class="perm-badge perm-off">${escapeHtml(l.principal_type)}</span></td>
+          <td><span class="perm-badge ${l.action === 'DELETE' ? 'btn-danger' : 'perm-on'}">${escapeHtml(l.action)}</span></td>
+          <td class="mono">${escapeHtml(l.client_ip)}</td>
           <td class="mono">${formatBytes(l.bytes_sent)} (${l.status_code})</td>
         </tr>
       `).join("");
@@ -2151,6 +2394,151 @@
       await loadDirectory(currentPrefix);
     }
 
+    // --- Admin: Local User Accounts ---
+
+    async function loadLocalUsers() {
+      const tbody = document.getElementById("localUsersTableBody");
+      if (!tbody) return;
+      const res = await fetch("/api/v1/admin/local-users");
+      if (!res.ok) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">Admin permission required to view and manage local user accounts.</td></tr>`;
+        return;
+      }
+      const data = await res.json();
+      const users = data.local_users || [];
+      tbody.innerHTML = users.map(u => `
+        <tr>
+          <td class="mono" style="font-weight:700; color:var(--accent);">${escapeHtml(u.username)}</td>
+          <td>
+            <div style="font-weight:600;">${escapeHtml(u.display_name || u.username)}</div>
+            <div class="mono" style="font-size:11.5px; color:var(--text-muted);">${escapeHtml(u.email || '')}</div>
+          </td>
+          <td>
+            <span class="perm-badge ${u.is_admin ? 'perm-on' : 'perm-off'}">${u.is_admin ? 'ADMIN' : 'STANDARD USER'}</span>
+          </td>
+          <td>
+            <span class="perm-badge ${u.disabled ? 'btn-danger' : 'perm-on'}">${u.disabled ? 'DISABLED' : 'ACTIVE'}</span>
+          </td>
+          <td class="mono">${u.last_login_at ? new Date(u.last_login_at).toISOString().replace('T',' ').substring(0,19) : 'Never'}</td>
+          <td>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button class="btn btn-sm" onclick="openAdminChangePasswordModal('${escapeJsAttr(u.username)}')">Change Password</button>
+              <button class="btn btn-sm ${u.disabled ? 'btn-primary' : 'btn-danger'}" onclick="toggleLocalUserStatus('${escapeJsAttr(u.username)}', ${!u.disabled})">
+                ${u.disabled ? 'Enable' : 'Disable'}
+              </button>
+              <button class="btn btn-sm btn-danger" onclick="deleteLocalUser('${escapeJsAttr(u.username)}')">Delete</button>
+            </div>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function openCreateLocalUserModal() {
+      document.getElementById("newLocalUsername").value = "";
+      document.getElementById("newLocalDisplayName").value = "";
+      document.getElementById("newLocalEmail").value = "";
+      document.getElementById("newLocalPassword").value = "";
+      document.getElementById("newLocalIsAdmin").checked = false;
+      document.getElementById("createLocalUserModal").classList.add("open");
+    }
+
+    async function submitCreateLocalUser() {
+      const payload = {
+        username: document.getElementById("newLocalUsername").value.trim(),
+        display_name: document.getElementById("newLocalDisplayName").value.trim(),
+        email: document.getElementById("newLocalEmail").value.trim(),
+        password: document.getElementById("newLocalPassword").value,
+        is_admin: document.getElementById("newLocalIsAdmin").checked
+      };
+      const res = await fetch("/api/v1/admin/local-users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || "Failed to create local account");
+        return;
+      }
+      closeModals();
+      showToast(`Created local account "${payload.username}"`);
+      await loadLocalUsers();
+    }
+
+    function openAdminChangePasswordModal(username) {
+      document.getElementById("adminTargetUsername").value = username;
+      document.getElementById("adminTargetUsernameLabel").textContent = username;
+      document.getElementById("adminNewUserPassword").value = "";
+      document.getElementById("adminChangePasswordModal").classList.add("open");
+    }
+
+    async function submitAdminChangeUserPassword() {
+      const username = document.getElementById("adminTargetUsername").value;
+      const new_password = document.getElementById("adminNewUserPassword").value;
+      if (!new_password) {
+        showToast("Please enter a new password");
+        return;
+      }
+      const res = await fetch(`/api/v1/admin/local-users/${encodeURIComponent(username)}/password`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ new_password })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || "Failed to update password");
+        return;
+      }
+      closeModals();
+      showToast(`Updated password for local account "${username}"`);
+      await loadLocalUsers();
+    }
+
+    async function toggleLocalUserStatus(username, disabled) {
+      const res = await fetch(`/api/v1/admin/local-users/${encodeURIComponent(username)}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disabled })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || "Failed to update status");
+        return;
+      }
+      showToast(`${disabled ? 'Disabled' : 'Enabled'} local account "${username}"`);
+      await loadLocalUsers();
+      await refreshMe();
+    }
+
+    async function toggleAllLocalUsers(disabled) {
+      if (disabled && !confirm("Disable all local user accounts?")) return;
+      const res = await fetch("/api/v1/admin/local-users/disable-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disabled })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || "Failed to update local accounts");
+        return;
+      }
+      showToast(disabled ? "Disabled all local accounts" : "Enabled all local accounts");
+      await loadLocalUsers();
+      await refreshMe();
+    }
+
+    async function deleteLocalUser(username) {
+      if (!confirm(`Delete local user account "${username}"?`)) return;
+      const res = await fetch(`/api/v1/admin/local-users/${encodeURIComponent(username)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || "Failed to delete local account");
+        return;
+      }
+      showToast(`Deleted local account "${username}"`);
+      await loadLocalUsers();
+    }
+
     // --- Admin: In-App Access Grants & App Groups ---
 
     async function loadGrants() {
@@ -2159,16 +2547,16 @@
       const tbody = document.getElementById("grantsTableBody");
       tbody.innerHTML = (data.grants || []).map(g => `
         <tr>
-          <td><span class="perm-badge perm-off">${g.subject_type}</span></td>
-          <td class="mono" style="font-weight:600; color:var(--accent);">${g.subject_id}</td>
-          <td class="mono">${(g.prefixes || ["*"]).join(", ")}</td>
+          <td><span class="perm-badge perm-off">${escapeHtml(g.subject_type)}</span></td>
+          <td class="mono" style="font-weight:600; color:var(--accent);">${escapeHtml(g.subject_id)}</td>
+          <td class="mono">${escapeHtml((g.prefixes || ["*"]).join(", "))}</td>
           <td><span class="perm-badge ${g.can_read ? 'perm-on' : 'perm-off'}">${g.can_read ? 'YES' : 'NO'}</span></td>
           <td><span class="perm-badge ${g.can_upload ? 'perm-on' : 'perm-off'}">${g.can_upload ? 'YES' : 'NO'}</span></td>
           <td><span class="perm-badge ${g.can_delete ? 'perm-on' : 'perm-off'}">${g.can_delete ? 'YES' : 'NO'}</span></td>
           <td><span class="perm-badge ${g.is_admin ? 'perm-on' : 'perm-off'}">${g.is_admin ? 'YES' : 'NO'}</span></td>
-          <td class="mono">${g.updated_by || 'system'}</td>
+          <td class="mono">${escapeHtml(g.updated_by || 'system')}</td>
           <td>
-            ${g.id !== 'builtin-readonly' ? `<button class="btn btn-sm btn-danger" onclick="deleteGrant('${g.id}')">Revoke</button>` : ''}
+            ${g.id !== 'builtin-readonly' ? `<button class="btn btn-sm btn-danger" onclick="deleteGrant('${escapeJsAttr(g.id)}')">Revoke</button>` : ''}
           </td>
         </tr>
       `).join("");
@@ -2224,11 +2612,11 @@
       const tbody = document.getElementById("groupsTableBody");
       tbody.innerHTML = (data.groups || []).map(g => `
         <tr>
-          <td class="mono" style="font-weight:700; color:var(--accent);">${g.name}</td>
-          <td>${g.description || ''}</td>
-          <td class="mono">${(g.members || []).join(", ")}</td>
+          <td class="mono" style="font-weight:700; color:var(--accent);">${escapeHtml(g.name)}</td>
+          <td>${escapeHtml(g.description || '')}</td>
+          <td class="mono">${escapeHtml((g.members || []).join(", "))}</td>
           <td class="mono">${new Date(g.updated_at).toISOString().substring(0, 19)}</td>
-          <td><button class="btn btn-sm btn-danger" onclick="deleteAppGroup('${g.name}')">Delete</button></td>
+          <td><button class="btn btn-sm btn-danger" onclick="deleteAppGroup('${escapeJsAttr(g.name)}')">Delete</button></td>
         </tr>
       `).join("");
     }
@@ -2273,11 +2661,11 @@
       const tbody = document.getElementById("serviceAccountsTableBody");
       tbody.innerHTML = (data.service_accounts || []).map(sa => `
         <tr>
-          <td class="mono" style="font-weight:700; color:var(--accent);">${sa.account_id}</td>
-          <td><div>${sa.name}</div><div style="font-size:11.5px; color:var(--text-muted);">${sa.description || ''}</div></td>
-          <td class="mono">${sa.created_by}</td>
+          <td class="mono" style="font-weight:700; color:var(--accent);">${escapeHtml(sa.account_id)}</td>
+          <td><div>${escapeHtml(sa.name)}</div><div style="font-size:11.5px; color:var(--text-muted);">${escapeHtml(sa.description || '')}</div></td>
+          <td class="mono">${escapeHtml(sa.created_by)}</td>
           <td class="mono">${sa.last_used_at ? new Date(sa.last_used_at).toISOString().replace('T',' ').substring(0,19) : 'Never'}</td>
-          <td><button class="btn btn-sm btn-danger" onclick="deleteServiceAccount('${sa.account_id}')">Revoke</button></td>
+          <td><button class="btn btn-sm btn-danger" onclick="deleteServiceAccount('${escapeJsAttr(sa.account_id)}')">Revoke</button></td>
         </tr>
       `).join("");
     }

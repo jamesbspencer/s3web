@@ -6,7 +6,7 @@
   "forwardPorts": [8080],
   "portsAttributes": {
     "8080": {
-      "label": "s3web UI & Sonatype Nexus /raw Proxy",
+      "label": "s3web UI & HTML Raw Access (/raw)",
       "onAutoForward": "notify"
     }
   },
@@ -16,9 +16,8 @@
     "S3WEB_BACKEND_MODE": "local",
     "S3WEB_S3_BUCKET": "corp-iso-artifacts-local",
     "S3WEB_BOOTSTRAP_ADMIN_EMAIL": "admin@example.com",
-    "S3WEB_BOOTSTRAP_ADMIN_PASSWORD": "admin-change-me",
-    "S3WEB_BOOTSTRAP_NEXUS_ID": "svc-nexus-proxy",
-    "S3WEB_BOOTSTRAP_NEXUS_SECRET": "nexus-proxy-secret-change-me"
+    "S3WEB_BOOTSTRAP_RAW_ID": "svc-raw-access",
+    "S3WEB_BOOTSTRAP_RAW_SECRET": "raw-access-secret-change-me"
   },
   "customizations": {
     "vscode": {
