@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>s3web REST API — Swagger Documentation</title>
+  <link rel="icon" type="image/png" href="/logo.png">
+  <style>
+    :root {
+      --bg-base: #0b0f19;
+      --bg-panel: #111827;
+      --bg-elevated: #1e293b;
+      --bg-hover: #334155;
+      --border: #1e293b;
+      --border-subtle: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --color-get: #38bdf8;
+      --color-post: #34d399;
+      --color-put: #fbbf24;
+      --color-delete: #f87171;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-base);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    header {
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand img {
+      height: 38px;
+      width: auto;
+      border-radius: 6px;
+    }
+    .brand h1 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .brand-badge {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      margin-left: 6px;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .btn {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: var(--bg-hover); }
+    .btn-primary { background: var(--accent); color: #0b0f19; border-color: var(--accent); }
+    .btn-primary:hover { background: var(--accent-hover); color: #fff; }
+    .btn-sm { padding: 4px 8px; font-size: 11.5px; }
+
+    .container {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .hero {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .hero-info h2 { font-size: 20px; font-weight: 700; }
+    .hero-info p { color: var(--text-muted); font-size: 13px; margin-top: 4px; max-width: 800px; }
+    .search-filter-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .search-input {
+      flex: 1;
+      min-width: 280px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+    }
+    .search-input:focus { border-color: var(--accent); }
+
+    /* Tags & Endpoints */
+    .tag-section {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .tag-header {
+      padding: 14px 20px;
+      background: rgba(30, 41, 59, 0.4);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+    }
+    .tag-title { font-size: 15px; font-weight: 700; color: var(--accent); }
+    .tag-desc { font-size: 12px; color: var(--text-muted); margin-left: 12px; font-weight: normal; }
+
+    .operation-card {
+      border-bottom: 1px solid var(--border);
+    }
+    .operation-card:last-child { border-bottom: none; }
+    .operation-header {
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .operation-header:hover { background: rgba(51, 65, 85, 0.25); }
+    .method-badge {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 800;
+      padding: 3px 8px;
+      border-radius: 4px;
+      min-width: 60px;
+      text-align: center;
+      text-transform: uppercase;
+    }
+    .method-get { background: rgba(56, 189, 248, 0.18); color: var(--color-get); border: 1px solid rgba(56,189,248,0.4); }
+    .method-post { background: rgba(52, 211, 153, 0.18); color: var(--color-post); border: 1px solid rgba(52,211,153,0.4); }
+    .method-put { background: rgba(251, 191, 36, 0.18); color: var(--color-put); border: 1px solid rgba(251,191,36,0.4); }
+    .method-delete { background: rgba(248, 113, 113, 0.18); color: var(--color-delete); border: 1px solid rgba(248,113,113,0.4); }
+
+    .path-text { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text-main); }
+    .summary-text { font-size: 12.5px; color: var(--text-muted); margin-left: auto; text-align: right; }
+
+    .operation-body {
+      padding: 16px 20px 20px 20px;
+      background: rgba(11, 15, 25, 0.5);
+      border-top: 1px solid var(--border);
+      display: none;
+    }
+    .operation-body.open { display: block; }
+    .op-desc { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
+
+    .op-section-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin: 12px 0 8px 0;
+      letter-spacing: 0.05em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+      margin-bottom: 16px;
+    }
+    th, td {
+      padding: 8px 12px;
+      text-align: left;
+      border: 1px solid var(--border-subtle);
+    }
+    th { background: var(--bg-elevated); color: var(--text-muted); font-size: 11.5px; font-weight: 600; }
+    td { background: var(--bg-panel); }
+    .mono { font-family: var(--font-mono); font-size: 11.5px; }
+
+    .param-input {
+      width: 100%;
+      background: var(--bg-base);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 5px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+    }
+    textarea.param-input {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    .try-bar {
+      margin-top: 14px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .response-box {
+      margin-top: 14px;
+      background: var(--bg-base);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 12px;
+      display: none;
+    }
+    .response-status {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    pre.response-body {
+      background: #060910;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: #38bdf8;
+      max-height: 350px;
+    }
+
+    /* Auth Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 300;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      width: 100%;
+      max-width: 520px;
+      padding: 24px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.8);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-group label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <a href="/" class="brand">
+      <img src="/logo.png" alt="s3web Logo">
+      <div>
+        <h1>s3web REST API</h1>
+      </div>
+      <span class="brand-badge">OpenAPI 3.0</span>
+    </a>
+    <div class="header-actions">
+      <button class="btn btn-primary" onclick="openAuthModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <span id="authStatusText">Authorize</span>
+      </button>
+      <a href="/api/v1/openapi.json" target="_blank" class="btn" title="Download raw OpenAPI 3.0 specification JSON">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        openapi.json
+      </a>
+      <a href="/raw/" target="_blank" class="btn">/raw/ Index</a>
+      <a href="/" class="btn">Console UI &rarr;</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="hero">
+      <div class="hero-info">
+        <h2>Interactive Swagger UI &amp; API Explorer</h2>
+        <p>
+          High-performance large file archive frontend &amp; private VPC repository for Amazon S3 with AWS S3 Intelligent-Tiering.
+          Supports dual-hashing (SHA-256 + SHA-1 in a single pass), decoupled in-app RBAC, and zero external CDN dependencies.
+        </p>
+      </div>
+      <div>
+        <span class="mono" style="font-size:12px; color:var(--text-dim);" id="apiBaseUrlDisplay">Base URL: /</span>
+      </div>
+    </div>
+
+    <div class="search-filter-bar">
+      <input type="text" class="search-input" id="apiSearchInput" placeholder="Filter endpoints by path, method, or keyword..." oninput="filterEndpoints(this.value)">
+      <button class="btn" onclick="expandAllOps()">Expand All</button>
+      <button class="btn" onclick="collapseAllOps()">Collapse All</button>
+    </div>
+
+    <div id="apiOperationsContainer">
+      <div style="text-align:center; padding:40px; color:var(--text-muted);">Loading API specification...</div>
+    </div>
+  </div>
+
+  <!-- Authorization Modal -->
+  <div class="modal-backdrop" id="authModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 style="font-size:16px;">API Authorization</h3>
+        <button class="btn btn-sm" onclick="closeAuthModal()">&#10005;</button>
+      </div>
+      <p style="font-size:12px; color:var(--text-muted);">
+        Configure credentials for live "Try It Out" API requests. Requests automatically include your browser's active session cookie if already logged in.
+      </p>
+
+      <div class="form-group">
+        <label>Bearer Token (Service Account or CI OIDC JWT)</label>
+        <input type="text" id="authBearerInput" class="param-input" placeholder="e.g. svc-raw-access:s3w_xxx or eyJhbGciOi...">
+        <span style="font-size:11px; color:var(--text-dim);">Sets <code>Authorization: Bearer &lt;token&gt;</code></span>
+      </div>
+
+      <div class="form-group">
+        <label>HTTP Basic Auth (Local Account or Service Account)</label>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+          <input type="text" id="authBasicUserInput" class="param-input" placeholder="Username / ID">
+          <input type="password" id="authBasicPassInput" class="param-input" placeholder="Password / Key">
+        </div>
+        <span style="font-size:11px; color:var(--text-dim);">Sets <code>Authorization: Basic base64(...)</code></span>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+        <button class="btn" onclick="clearAuth()">Clear Credentials</button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn" onclick="closeAuthModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="saveAuth()">Apply Credentials</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let specData = null;
+    let authHeader = localStorage.getItem("s3web_api_auth") || "";
+
+    function updateAuthStatusText() {
+      const el = document.getElementById("authStatusText");
+      if (el) {
+        el.textContent = authHeader ? "Authorized \u2713" : "Authorize";
+      }
+    }
+
+    function openAuthModal() {
+      document.getElementById("authModal").classList.add("open");
+    }
+    function closeAuthModal() {
+      document.getElementById("authModal").classList.remove("open");
+    }
+    function saveAuth() {
+      const bearer = document.getElementById("authBearerInput").value.trim();
+      const user = document.getElementById("authBasicUserInput").value.trim();
+      const pass = document.getElementById("authBasicPassInput").value;
+
+      if (bearer) {
+        authHeader = bearer.startsWith("Bearer ") ? bearer : `Bearer ${bearer}`;
+      } else if (user) {
+        authHeader = `Basic ${btoa(user + ":" + pass)}`;
+      } else {
+        authHeader = "";
+      }
+      localStorage.setItem("s3web_api_auth", authHeader);
+      updateAuthStatusText();
+      closeAuthModal();
+    }
+    function clearAuth() {
+      authHeader = "";
+      localStorage.removeItem("s3web_api_auth");
+      document.getElementById("authBearerInput").value = "";
+      document.getElementById("authBasicUserInput").value = "";
+      document.getElementById("authBasicPassInput").value = "";
+      updateAuthStatusText();
+      closeAuthModal();
+    }
+
+    async function initSwagger() {
+      updateAuthStatusText();
+      try {
+        const res = await fetch("/api/v1/openapi.json");
+        if (!res.ok) throw new Error("Failed to load /api/v1/openapi.json");
+        specData = await res.json();
+        renderSpec(specData);
+      } catch (err) {
+        document.getElementById("apiOperationsContainer").innerHTML = `
+          <div style="text-align:center; padding:40px; color:#f87171;">
+            Failed to load OpenAPI specification: ${err.message}
+          </div>
+        `;
+      }
+    }
+
+    function renderSpec(spec) {
+      const container = document.getElementById("apiOperationsContainer");
+      const tagsMap = new Map();
+
+      // Initialize tags
+      (spec.tags || []).forEach(t => {
+        tagsMap.set(t.name, { desc: t.description, ops: [] });
+      });
+
+      // Parse paths
+      for (const [path, methods] of Object.entries(spec.paths || {})) {
+        for (const [method, op] of Object.entries(methods)) {
+          if (!["get", "post", "put", "delete", "patch", "head"].includes(method.toLowerCase())) continue;
+          const tag = (op.tags && op.tags[0]) || "Default";
+          if (!tagsMap.has(tag)) {
+            tagsMap.set(tag, { desc: "", ops: [] });
+          }
+          tagsMap.get(tag).ops.push({ path, method: method.toLowerCase(), op });
+        }
+      }
+
+      let html = "";
+      for (const [tagName, tagData] of tagsMap.entries()) {
+        if (!tagData.ops.length) continue;
+        const tagId = `tag-${tagName.replace(/[^a-zA-Z0-9]/g, "-")}`;
+        html += `
+          <div class="tag-section" id="${tagId}">
+            <div class="tag-header" onclick="toggleTag('${tagId}')">
+              <div>
+                <span class="tag-title">${escapeHtml(tagName)}</span>
+                <span class="tag-desc">${escapeHtml(tagData.desc)}</span>
+              </div>
+              <span class="mono" style="color:var(--text-dim); font-size:12px;">${tagData.ops.length} endpoint${tagData.ops.length === 1 ? '' : 's'}</span>
+            </div>
+            <div class="tag-content">
+              ${tagData.ops.map((item, idx) => renderOperation(item.path, item.method, item.op, `${tagId}-op-${idx}`)).join("")}
+            </div>
+          </div>
+        `;
+      }
+      container.innerHTML = html;
+    }
+
+    function renderOperation(path, method, op, opId) {
+      const params = op.parameters || [];
+      const hasBody = !!op.requestBody;
+      const responses = op.responses || {};
+
+      return `
+        <div class="operation-card" id="${opId}">
+          <div class="operation-header" onclick="toggleOp('${opId}')">
+            <span class="method-badge method-${method}">${method}</span>
+            <span class="path-text">${escapeHtml(path)}</span>
+            <span class="summary-text">${escapeHtml(op.summary || "")}</span>
+          </div>
+          <div class="operation-body" id="${opId}-body">
+            <div class="op-desc">${escapeHtml(op.description || op.summary || "")}</div>
+
+            ${params.length ? `
+              <div class="op-section-title">Parameters</div>
+              <table>
+                <thead>
+                  <tr><th>Name</th><th>In</th><th>Type</th><th>Description</th><th>Test Value</th></tr>
+                </thead>
+                <tbody>
+                  ${params.map(p => `
+                    <tr>
+                      <td class="mono" style="font-weight:700;">${escapeHtml(p.name)} ${p.required ? '<span style="color:#f87171;">*</span>' : ''}</td>
+                      <td class="mono" style="color:var(--text-dim);">${escapeHtml(p.in)}</td>
+                      <td class="mono">${escapeHtml((p.schema && p.schema.type) || "string")}</td>
+                      <td style="color:var(--text-muted);">${escapeHtml(p.description || "")}</td>
+                      <td style="width:240px;">
+                        <input type="text" class="param-input" data-param-name="${escapeHtml(p.name)}" data-param-in="${escapeHtml(p.in)}" value="${escapeHtml(p.schema?.example || p.example || "")}">
+                      </td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            ` : ''}
+
+            ${hasBody ? `
+              <div class="op-section-title">Request Body (application/json)</div>
+              <textarea class="param-input" id="${opId}-reqbody" placeholder="JSON payload...">${getSampleBody(op.requestBody)}</textarea>
+            ` : ''}
+
+            <div class="op-section-title">Responses</div>
+            <table>
+              <thead><tr><th style="width:100px;">Status</th><th>Description</th></tr></thead>
+              <tbody>
+                ${Object.entries(responses).map(([code, r]) => `
+                  <tr>
+                    <td class="mono" style="font-weight:700; color:${code.startsWith('2') ? '#34d399' : '#f87171'};">${escapeHtml(code)}</td>
+                    <td style="color:var(--text-muted);">${escapeHtml(r.description || "")}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+
+            <div class="try-bar">
+              <button class="btn btn-primary" onclick="executeTry('${opId}', '${method}', '${path}')">Try It Out</button>
+              <span class="mono" style="font-size:11.5px; color:var(--text-dim);">Sends live request to server</span>
+            </div>
+
+            <div class="response-box" id="${opId}-resbox">
+              <div class="response-status" id="${opId}-resstatus"></div>
+              <pre class="response-body" id="${opId}-resbody"></pre>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function getSampleBody(reqBody) {
+      if (!reqBody || !reqBody.content) return "";
+      const jsonContent = reqBody.content["application/json"];
+      if (!jsonContent || !jsonContent.schema) return "";
+      const schema = jsonContent.schema;
+      if (schema.example) return JSON.stringify(schema.example, null, 2);
+      if (schema.properties) {
+        const sample = {};
+        for (const [k, v] of Object.entries(schema.properties)) {
+          sample[k] = v.example !== undefined ? v.example : (v.type === "boolean" ? false : (v.type === "number" || v.type === "integer" ? 0 : ""));
+        }
+        return JSON.stringify(sample, null, 2);
+      }
+      return "";
+    }
+
+    function toggleTag(tagId) {
+      const el = document.getElementById(tagId);
+      if (!el) return;
+      const content = el.querySelector(".tag-content");
+      if (content) content.style.display = content.style.display === "none" ? "block" : "none";
+    }
+
+    function toggleOp(opId) {
+      const body = document.getElementById(`${opId}-body`);
+      if (body) body.classList.toggle("open");
+    }
+
+    function expandAllOps() {
+      document.querySelectorAll(".operation-body").forEach(b => b.classList.add("open"));
+      document.querySelectorAll(".tag-content").forEach(c => c.style.display = "block");
+    }
+
+    function collapseAllOps() {
+      document.querySelectorAll(".operation-body").forEach(b => b.classList.remove("open"));
+    }
+
+    function filterEndpoints(query) {
+      const q = (query || "").toLowerCase().trim();
+      document.querySelectorAll(".operation-card").forEach(card => {
+        const txt = card.textContent.toLowerCase();
+        card.style.display = txt.includes(q) ? "block" : "none";
+      });
+    }
+
+    async function executeTry(opId, method, pathPattern) {
+      const card = document.getElementById(opId);
+      let targetUrl = pathPattern;
+      const queryParams = new URLSearchParams();
+      const headers = {};
+
+      if (authHeader) {
+        headers["Authorization"] = authHeader;
+      }
+
+      // Gather parameters
+      card.querySelectorAll("input[data-param-name]").forEach(input => {
+        const name = input.getAttribute("data-param-name");
+        const inType = input.getAttribute("data-param-in");
+        const val = input.value.trim();
+        if (!val) return;
+
+        if (inType === "path") {
+          targetUrl = targetUrl.replace(`{${name}}`, encodeURIComponent(val));
+        } else if (inType === "query") {
+          queryParams.set(name, val);
+        } else if (inType === "header") {
+          headers[name] = val;
+        }
+      });
+
+      const qStr = queryParams.toString();
+      if (qStr) {
+        targetUrl += (targetUrl.includes("?") ? "&" : "?") + qStr;
+      }
+
+      const options = {
+        method: method.toUpperCase(),
+        headers: headers
+      };
+
+      const reqBodyEl = document.getElementById(`${opId}-reqbody`);
+      if (reqBodyEl && ["POST", "PUT", "PATCH"].includes(options.method)) {
+        const bodyVal = reqBodyEl.value.trim();
+        if (bodyVal) {
+          options.body = bodyVal;
+          if (!options.headers["Content-Type"]) {
+            options.headers["Content-Type"] = "application/json";
+          }
+        }
+      }
+
+      const resBox = document.getElementById(`${opId}-resbox`);
+      const resStatus = document.getElementById(`${opId}-resstatus`);
+      const resBody = document.getElementById(`${opId}-resbody`);
+
+      resBox.style.display = "block";
+      resStatus.textContent = "Sending request...";
+      resBody.textContent = `-> ${options.method} ${targetUrl}`;
+
+      try {
+        const startTime = Date.now();
+        const res = await fetch(targetUrl, options);
+        const duration = Date.now() - startTime;
+        const text = await res.text();
+
+        resStatus.innerHTML = `<span style="color:${res.ok ? '#34d399' : '#f87171'}">HTTP ${res.status} ${res.statusText}</span> (${duration}ms)`;
+
+        let formatted = text;
+        try {
+          const parsed = JSON.parse(text);
+          formatted = JSON.stringify(parsed, null, 2);
+        } catch (_) {}
+
+        resBody.textContent = formatted || "(Empty response body)";
+      } catch (err) {
+        resStatus.innerHTML = `<span style="color:#f87171">Request Failed</span>`;
+        resBody.textContent = err.message;
+      }
+    }
+
+    function escapeHtml(val) {
+      return String(val == null ? "" : val)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    window.addEventListener("DOMContentLoaded", initSwagger);
+  </script>
+</body>
+</html>

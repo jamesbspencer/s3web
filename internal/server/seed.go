@@ -286,6 +286,7 @@ func (s *Server) seedBootstrapData(ctx context.Context) error {
 				HashStatus:      model.HashReady,
 				S3ETag:          putRes.ETag,
 				UploadedBy:      item.uploadedBy,
+				UploadedAt:      now.Add(-item.updatedAgo),
 				UpdatedAt:       now.Add(-item.updatedAgo),
 				LastAccessedAt:  now.Add(-item.accessedAgo),
 				DownloadCount:   item.downloads,

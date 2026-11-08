@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>s3web — Private S3 Artifact Browser &amp; HTML Raw Access</title>
+  <title>s3web — Large File Archive Frontend for AWS S3 Intelligent-Tiering</title>
   <link rel="icon" href="/logo.png" />
   <style>
     :root {
@@ -99,6 +99,98 @@
       display: flex;
       align-items: center;
       gap: 10px;
+    }
+
+    /* User Profile Dropdown */
+    .user-dropdown {
+      position: relative;
+      display: inline-block;
+    }
+    .user-menu-btn {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    .user-menu-btn:hover, .user-menu-btn.active {
+      background: var(--bg-hover);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .user-dropdown-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      min-width: 210px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+      z-index: 200;
+      display: none;
+      flex-direction: column;
+      padding: 6px 0;
+    }
+    .user-dropdown-menu.open {
+      display: flex;
+    }
+    .user-dropdown-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .user-dropdown-header .user-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-main);
+      word-break: break-all;
+    }
+    .user-dropdown-header .user-role {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+    .user-dropdown-item {
+      padding: 9px 14px;
+      font-size: 12.5px;
+      color: var(--text-main);
+      background: none;
+      border: none;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.12s ease;
+      font-family: inherit;
+    }
+    .user-dropdown-item:hover {
+      background: var(--bg-elevated);
+      color: var(--accent);
+    }
+    .user-dropdown-divider {
+      height: 1px;
+      background: var(--border-subtle);
+      margin: 4px 0;
+    }
+    .user-dropdown-item.danger {
+      color: #f87171;
+    }
+    .user-dropdown-item.danger:hover {
+      background: rgba(239, 68, 68, 0.12);
+      color: #ef4444;
     }
 
     /* Navigation Tabs */
@@ -209,6 +301,41 @@
       color: #fca5a5;
     }
     .btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
+    .btn-ghost {
+      background: transparent;
+      border-color: transparent;
+      color: var(--text-muted);
+    }
+    .btn-ghost:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+      border-color: var(--border-subtle);
+    }
+    .btn-outline-primary {
+      background: transparent;
+      border-color: rgba(56, 189, 248, 0.4);
+      color: var(--accent);
+    }
+    .btn-outline-primary:hover {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .btn-group {
+      display: inline-flex;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border-subtle);
+    }
+    .btn-group .btn {
+      border: none;
+      border-radius: 0;
+      border-right: 1px solid var(--border-subtle);
+      margin: 0;
+    }
+    .btn-group .btn:last-child {
+      border-right: none;
+    }
     .btn-sm { padding: 4px 8px; font-size: 11.5px; }
 
     /* Badges */
@@ -309,21 +436,69 @@
       margin-left: 6px;
       opacity: 0.65;
     }
+    .col-size {
+      text-align: right !important;
+      font-variant-numeric: tabular-nums;
+      padding-right: 20px !important;
+    }
     .tree-toggle {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 18px;
-      height: 18px;
+      width: 20px;
+      height: 20px;
       border-radius: 4px;
       color: var(--text-muted);
-      font-size: 11px;
-      background: rgba(148, 163, 184, 0.1);
-      border: 1px solid rgba(148, 163, 184, 0.2);
+      background: transparent;
+      border: 1px solid transparent;
       cursor: pointer;
       user-select: none;
       flex-shrink: 0;
-      transition: transform 0.12s ease, background 0.12s ease;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .tree-toggle:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+      border-color: var(--border-subtle);
+    }
+    .tree-chevron {
+      display: inline-block;
+      vertical-align: middle;
+      transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .tree-chevron.expanded {
+      transform: rotate(90deg);
+    }
+    .file-icon {
+      flex-shrink: 0;
+      display: inline-block;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+    .icon-folder { color: #f59e0b; }
+    .icon-bucket { color: #10b981; }
+    .icon-iso { color: #38bdf8; }
+    .icon-archive { color: #fb923c; }
+    .icon-file { color: #94a3b8; }
+    .tree-drop-target {
+      background: rgba(56, 189, 248, 0.18) !important;
+      outline: 2px dashed var(--accent) !important;
+      outline-offset: -2px;
+    }
+    .search-kbd-hint {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 11px;
+      font-family: var(--font-mono);
+      background: var(--bg-elevated);
+      color: var(--text-dim);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 1px 6px;
+      pointer-events: none;
+      line-height: 1.2;
     }
     .tree-folder-row {
       background: rgba(15, 23, 42, 0.45);
@@ -560,25 +735,80 @@
     <div class="brand">
       <img src="/logo.png" alt="Logo" class="brand-logo" />
       <div>
-        <div id="repoTitleText">s3web &mdash; S3 Artifact Repository</div>
+        <div id="repoTitleText">s3web &mdash; Large File Archive</div>
         <div style="font-size:11px; color:var(--text-muted); font-weight:400;">
-          Private VPC (VPN Only) &bull;
+          Large File Archive for AWS S3 Intelligent-Tiering &bull;
           <span class="tier-hover-trigger" style="text-decoration:underline dotted var(--border-subtle);" onmouseenter="showTierTooltip(event, 'OVERVIEW')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">S3 Intelligent-Tiering<span class="tier-info-icon">?</span></span>
-          &bull; HTML Raw Access
+          &bull; <a href="/raw/" target="_blank" style="color:inherit; text-decoration:none;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='inherit'">HTML Raw Access</a>
+          &bull; <a href="/swagger/" target="_blank" style="color:inherit; text-decoration:none;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='inherit'">Swagger API Docs</a>
         </div>
       </div>
     </div>
 
     <div class="search-bar">
-      <input type="text" id="searchInput" placeholder="Search filename, prefix, or paste SHA-256 / SHA-1 digest..." onkeydown="if(event.key==='Enter') runSearch()" />
+      <div style="position:relative; flex:1; display:flex;">
+        <input type="text" id="searchInput" placeholder="Search filename, prefix, or paste SHA-256 / SHA-1 digest..." onkeydown="if(event.key==='Enter') runSearch()" style="width:100%; padding-right:32px; box-sizing:border-box;" />
+        <span class="search-kbd-hint" title="Press / anywhere to focus search">/</span>
+      </div>
       <button class="btn" onclick="runSearch()">Search</button>
       <button class="btn" onclick="clearSearch()">Reset</button>
     </div>
 
     <div class="user-controls">
-      <span id="currentUserBadge" class="bucket-pill" style="display:none;"></span>
-      <button class="btn btn-sm" id="changeOwnPasswordBtn" onclick="openChangeOwnPasswordModal()" style="display:none;" title="Update your local account password">Change Password</button>
-      <button class="btn btn-sm" id="logoutBtn" onclick="submitLogout()" style="display:none;" title="Sign out">Sign Out</button>
+      <span id="anonBadge" class="bucket-pill" style="display:none;">Anonymous (Guest)</span>
+      <button class="btn btn-sm btn-outline-primary" id="signInBtn" onclick="showLoginOverlay()" style="display:none;" title="Sign in with a local or SSO account">Sign In</button>
+
+      <!-- Authenticated User Profile Dropdown -->
+      <div class="user-dropdown" id="userDropdownWrapper" style="display:none;">
+        <button class="user-menu-btn" id="userMenuBtn" onclick="toggleUserDropdown(event)" aria-haspopup="true" aria-expanded="false" title="User Account Menu">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent); flex-shrink:0;">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+          <span id="userMenuUsername" class="mono" style="font-size:12px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">User</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+        <div class="user-dropdown-menu" id="userDropdownMenu">
+          <div class="user-dropdown-header">
+            <span class="user-name" id="dropdownUserName">--</span>
+            <span class="user-role" id="dropdownUserRole">--</span>
+          </div>
+          <button class="user-dropdown-item" onclick="closeUserDropdown(); openUserProfileModal();">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            <span>Profile &amp; Notifications</span>
+          </button>
+          <button class="user-dropdown-item" id="dropdownChangePassBtn" onclick="closeUserDropdown(); openChangeOwnPasswordModal();" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <span>Change Password</span>
+          </button>
+          <a class="user-dropdown-item" href="/swagger/" target="_blank" onclick="closeUserDropdown()" style="text-decoration:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            <span>Swagger API Docs</span>
+          </a>
+          <div class="user-dropdown-divider"></div>
+          <button class="user-dropdown-item danger" onclick="closeUserDropdown(); submitLogout();">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            <span>Sign Out</span>
+          </button>
+        </div>
+      </div>
       <button class="btn" id="tabSettingsBtn" onclick="switchTab('settings')" title="Settings" aria-label="Settings" style="padding:7px 9px;">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
@@ -588,14 +818,14 @@
     </div>
   </header>
 
-  <!-- Full-Screen Authentication Gate (Anonymous Access Disabled) -->
+  <!-- Full-Screen Authentication Gate / Sign-In Modal -->
   <div id="loginOverlay" style="position:fixed; inset:0; background:rgba(11,15,25,0.96); z-index:250; display:none; align-items:center; justify-content:center; padding:24px;">
     <div class="card" style="width:100%; max-width:440px; padding:28px; display:flex; flex-direction:column; gap:16px; border-color:var(--border-subtle); box-shadow:0 20px 50px rgba(0,0,0,0.75);">
       <div style="display:flex; align-items:center; gap:12px;">
         <img src="/logo.png" alt="Logo" style="height:42px; width:auto; border-radius:6px; object-fit:contain;" />
         <div>
           <h3 style="font-size:16px;">Sign In to s3web</h3>
-          <p style="font-size:12px; color:var(--text-muted);">Anonymous access is disabled. Sign in with a local account.</p>
+          <p style="font-size:12px; color:var(--text-muted);" id="loginGateDesc">Sign in with a local account or SSO identity.</p>
         </div>
       </div>
       <div id="loginErrorBox" style="display:none; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; padding:10px 12px; border-radius:6px; font-size:12.5px;"></div>
@@ -607,7 +837,10 @@
         <label>Password</label>
         <input type="password" id="loginPasswordInput" placeholder="Enter password..." autocomplete="current-password" onkeydown="if(event.key==='Enter') submitLogin()" />
       </div>
-      <button class="btn btn-primary" style="justify-content:center; padding:10px;" onclick="submitLogin()">Sign In</button>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn btn-ghost" id="loginCancelBtn" onclick="hideLoginOverlay()" style="display:none;">Continue as Guest</button>
+        <button class="btn btn-primary" style="justify-content:center; padding:10px 20px;" onclick="submitLogin()">Sign In</button>
+      </div>
     </div>
   </div>
 
@@ -626,36 +859,44 @@
       <div class="toolbar">
         <div class="breadcrumbs" id="breadcrumbs"></div>
         <div class="toolbar-actions">
-          <button class="btn btn-sm" onclick="expandAllTree()">Expand All</button>
-          <button class="btn btn-sm" onclick="collapseAllTree()">Collapse All</button>
-          <label class="tier-hover-trigger" style="font-size:12px; color:var(--text-muted);" onmouseenter="showTierTooltip(event, 'OVERVIEW')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">Intelligent-Tiering Filter:<span class="tier-info-icon">?</span></label>
-          <select id="tierFilter" onchange="loadDirectory(currentPrefix)">
-            <option value="">All Intelligent-Tiering Sub-Tiers</option>
-            <option value="FA">Frequent Access (FA - Hot)</option>
-            <option value="IA">Infrequent Access (IA - 30-90d)</option>
-            <option value="AIA">Archive Instant Access (AIA - 90d+)</option>
-            <option value="AA">Archive Access (AA - Async Restore)</option>
-            <option value="DAA">Deep Archive Access (DAA - Async Restore)</option>
-          </select>
-          <a class="btn" id="rawAutoindexLink" href="/raw/" target="_blank">Open /raw/ HTML Index</a>
-          <button class="btn" onclick="loadDirectory(currentPrefix)">Refresh</button>
-          <button class="btn btn-primary" id="uploadBtn" onclick="openUploadModal()" style="display:none;">+ Upload ISO / Archive</button>
+          <div class="btn-group">
+            <button class="btn btn-sm" onclick="expandAllTree()" title="Expand all folders">Expand All</button>
+            <button class="btn btn-sm" onclick="collapseAllTree()" title="Collapse all folders">Collapse All</button>
+          </div>
+          <div style="display:inline-flex; align-items:center; gap:6px; background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:6px; padding:2px 8px;">
+            <label class="tier-hover-trigger" style="font-size:11.5px; color:var(--text-muted); cursor:pointer;" onmouseenter="showTierTooltip(event, 'OVERVIEW')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">
+              Tier Filter:<span class="tier-info-icon" style="margin-left:3px;">?</span>
+            </label>
+            <select id="tierFilter" onchange="loadDirectory(currentPrefix)" style="border:none; background:transparent; padding:3px 4px; font-size:12px; color:var(--text-main);">
+              <option value="">All Sub-Tiers</option>
+              <option value="FA">Frequent Access (FA)</option>
+              <option value="IA">Infrequent Access (IA)</option>
+              <option value="AIA">Archive Instant Access (AIA)</option>
+              <option value="AA">Archive Access (AA - Restore Req)</option>
+              <option value="DAA">Deep Archive Access (DAA - Restore Req)</option>
+            </select>
+          </div>
+          <div class="btn-group">
+            <a class="btn btn-sm" id="rawAutoindexLink" href="/raw/" target="_blank" title="Open Apache/Nginx-style HTML autoindex directory list">Open /raw/ HTML Index</a>
+            <button class="btn btn-sm" onclick="loadDirectory(currentPrefix)" title="Refresh directory tree">Refresh</button>
+          </div>
+          <button class="btn btn-primary" id="uploadBtn" onclick="openUploadModal()" style="display:none;">+ Upload File / Archive</button>
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" id="browserTableCard">
         <table>
           <thead>
             <tr>
               <th>Name</th>
-              <th>Size</th>
-              <th>
+              <th class="col-size" style="width:110px;">Size</th>
+              <th style="width:230px;">
                 <span class="tier-hover-trigger" onmouseenter="showTierTooltip(event, 'OVERVIEW')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">
                   S3 Intelligent-Tiering <span class="tier-info-icon">?</span>
                 </span>
               </th>
-              <th>Last Accessed (UTC)</th>
-              <th>Actions</th>
+              <th style="width:170px;">Last Accessed (UTC)</th>
+              <th style="width:310px;">Actions</th>
             </tr>
           </thead>
           <tbody id="browserTableBody">
@@ -700,6 +941,9 @@
         </button>
         <button class="settings-tab" id="settingsTabBtn-storage" onclick="switchSettingsCategory('storage')">
           Storage &amp; Lifecycle
+        </button>
+        <button class="settings-tab" id="settingsTabBtn-logs" onclick="switchSettingsCategory('logs')">
+          Access &amp; Audit Logs
         </button>
       </div>
 
@@ -805,6 +1049,7 @@
             <div style="font-size:11.5px; color:var(--text-muted); margin-top:3px;">Whitelisted suffixes for uploaded files. Multi-part suffixes like <code>.tar.gz</code> are supported.</div>
           </div>
           <div class="checkbox-row" style="margin-top:4px;">
+            <label><input type="checkbox" id="setEnableAnonymousAccess" /> Enable Anonymous Access (Unauthenticated Read-Only)</label>
             <label><input type="checkbox" id="setEnableAutoindex" checked /> Enable <code>/raw/</code> HTML Directory Index</label>
             <label><input type="checkbox" id="setEnableSidecars" checked /> Enable Virtual <code>.sha256</code> &amp; <code>.sha1</code> Sidecars</label>
           </div>
@@ -968,6 +1213,73 @@
             <div class="meta-item"><label>AWS Region / Mode</label><div class="mono" id="setInfoRegion">--</div></div>
             <div class="meta-item"><label>SQS Event Queue</label><div class="mono" id="setInfoSqs" style="word-break:break-all; font-size:11px;">--</div></div>
           </div>
+
+          <div style="padding-top:14px; border-top:1px solid var(--border-subtle); display:flex; flex-direction:column; gap:12px;">
+            <div>
+              <h4 style="font-size:14px; color:var(--accent);">Slack Webhook Notifications</h4>
+              <p style="font-size:12px; color:var(--text-muted);">Receive notifications in a designated Slack channel when users initiate restores or when asynchronous archive retrievals complete.</p>
+            </div>
+            <div class="checkbox-row">
+              <label><input type="checkbox" id="setEnableSlack" /> Enable Slack Notifications</label>
+            </div>
+            <div class="form-group">
+              <label>Slack Incoming Webhook URL</label>
+              <div style="display:flex; gap:8px;">
+                <input type="url" id="setSlackWebhookUrl" placeholder="https://hooks.slack.com/services/T000/B000/XXXX" style="flex:1;" />
+                <button type="button" class="btn" onclick="testSlackWebhook()">Test Webhook</button>
+              </div>
+              <span style="font-size:11px; color:var(--text-muted); margin-top:4px;">
+                Create an Incoming Webhook in your Slack Workspace apps and paste the full URL here.
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CATEGORY 7: GLOBAL ACCESS & AUDIT LOGS -->
+      <div id="settingsPane-logs" style="display:none;">
+        <div class="toolbar" style="flex-wrap:wrap; gap:12px;">
+          <div>
+            <h4 style="font-size:14px; color:var(--accent);">Global Access &amp; Audit Logs</h4>
+            <p style="font-size:12px; color:var(--text-muted);">Real-time audit log of user logins, logouts, file downloads, uploads, deletions, tier transitions, and archive restores across the entire repository.</p>
+          </div>
+          <div class="toolbar-actions" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+            <select id="allLogsActionFilter" onchange="loadAllLogs()" class="btn-sm" style="background:var(--bg-input); color:var(--text-normal); border:1px solid var(--border-subtle); border-radius:6px; padding:6px 10px;">
+              <option value="">All Actions</option>
+              <option value="LOGIN">LOGIN</option>
+              <option value="LOGOUT">LOGOUT</option>
+              <option value="DOWNLOAD">DOWNLOAD</option>
+              <option value="UPLOAD">UPLOAD</option>
+              <option value="DELETE">DELETE</option>
+              <option value="RESTORE">RESTORE</option>
+              <option value="TIER_CHANGE">TIER_CHANGE</option>
+            </select>
+            <input type="text" id="allLogsActorFilter" placeholder="Filter by user / actor..." onkeydown="if(event.key==='Enter') loadAllLogs()" style="max-width:160px; font-size:12px; padding:6px 10px;" />
+            <input type="text" id="allLogsKeyFilter" placeholder="Filter by object key..." onkeydown="if(event.key==='Enter') loadAllLogs()" style="max-width:180px; font-size:12px; padding:6px 10px;" />
+            <select id="allLogsLimitSelect" onchange="loadAllLogs()" class="btn-sm" style="background:var(--bg-input); color:var(--text-normal); border:1px solid var(--border-subtle); border-radius:6px; padding:6px 10px;">
+              <option value="50">Limit 50</option>
+              <option value="100" selected>Limit 100</option>
+              <option value="250">Limit 250</option>
+              <option value="500">Limit 500</option>
+            </select>
+            <button class="btn btn-sm btn-primary" onclick="loadAllLogs()">Refresh Logs</button>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:24px; overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:160px;">Timestamp (UTC)</th>
+                <th style="width:130px;">Action</th>
+                <th style="width:140px;">Actor</th>
+                <th style="width:120px;">Client IP</th>
+                <th>Object Key</th>
+                <th style="width:100px;">Bytes</th>
+                <th>User Agent / Client</th>
+              </tr>
+            </thead>
+            <tbody id="allLogsTableBody"></tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -981,29 +1293,38 @@
         <div>
           <div style="font-size:11px; color:var(--accent); text-transform:uppercase; font-weight:700;">Artifact Metadata, Checksums &amp; Access History</div>
           <h2 id="drawerFilename" style="font-size:18px; margin-top:4px; word-break:break-all;"></h2>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:4px;" id="drawerUploadedSub"></div>
         </div>
         <button class="btn" onclick="closeDrawer()">Close &#10005;</button>
       </div>
 
       <div class="meta-grid" id="drawerMetaGrid"></div>
 
-      <!-- Intelligent-Tiering Control Bar -->
-      <div class="card" style="padding:14px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
-        <div>
-          <div style="font-size:12px; font-weight:600;">S3 Intelligent-Tiering State</div>
-          <div style="font-size:11.5px; color:var(--text-muted);" id="drawerTierNote"></div>
+      <!-- S3 Intelligent-Tiering State & Retrieval Card -->
+      <div class="card" style="padding:14px; display:flex; flex-direction:column; gap:10px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted);">S3 Intelligent-Tiering State</span>
+            <span id="drawerTierBadge"></span>
+            <span id="drawerRestoreBadge"></span>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;" id="drawerTierActions">
+            <a class="btn btn-primary btn-sm" id="drawerDownloadBtn" style="display:none;" target="_blank">Download File</a>
+            <button class="btn btn-primary btn-sm tier-hover-trigger" id="drawerRestoreBtn" style="display:none;" onmouseenter="showTierTooltip(event, 'RESTORE')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()" onclick="openRestoreModal(currentDrawerItem)">Restore from Archive (s3:RestoreObject)</button>
+            <button class="btn btn-sm btn-ghost" id="drawerRestoringBtn" style="display:none; cursor:not-allowed;" disabled>
+              <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:#fbbf24; margin-right:5px; animation:pulse 1.5s infinite;"></span>Restoring...
+            </button>
+            <select id="drawerSimulateTier" class="btn-sm" onchange="simulateTierChange(this.value)" style="display:none;">
+              <option value="">Simulate Tier Transition...</option>
+              <option value="FA">Frequent Access (FA - Online)</option>
+              <option value="IA">Infrequent Access (IA - Online)</option>
+              <option value="AIA">Archive Instant Access (AIA - Online)</option>
+              <option value="AA">Archive Access (AA - Async)</option>
+              <option value="DAA">Deep Archive Access (DAA - Async)</option>
+            </select>
+          </div>
         </div>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <button class="btn btn-primary btn-sm" id="drawerRestoreBtn" style="display:none;" onclick="restoreCurrentObject()">Restore from Archive (s3:RestoreObject)</button>
-          <select id="drawerSimulateTier" class="btn-sm" onchange="simulateTierChange(this.value)">
-            <option value="">Simulate Tier Transition...</option>
-            <option value="FA">Frequent Access (FA)</option>
-            <option value="IA">Infrequent Access (IA)</option>
-            <option value="AIA">Archive Instant Access (AIA)</option>
-            <option value="AA">Archive Access (AA - Async)</option>
-            <option value="DAA">Deep Archive Access (DAA - Async)</option>
-          </select>
-        </div>
+        <div style="font-size:12px; line-height:1.5; color:var(--text-main); background:var(--bg-base); padding:10px 12px; border-radius:6px; border:1px solid var(--border-subtle);" id="drawerTierNote"></div>
       </div>
 
       <!-- Full-File Linear Checksums -->
@@ -1075,7 +1396,7 @@
   <!-- Upload Artifact Modal -->
   <div class="modal-backdrop" id="uploadModal">
     <div class="modal">
-      <h3>Upload ISO / Compressed Archive</h3>
+      <h3>Upload Large File / Archive</h3>
       <p style="font-size:12px; color:var(--text-muted);">Streams directly to S3 Intelligent-Tiering (Frequent Access) while computing linear SHA-256 and SHA-1 in a single pass.</p>
       <div class="form-group">
         <label>Target S3 Bucket</label>
@@ -1083,7 +1404,7 @@
       </div>
       <div class="form-group">
         <label>Target Object Key (Path in Bucket)</label>
-        <input type="text" id="uploadKeyInput" placeholder="isos/ubuntu/ubuntu-24.04-custom.iso" />
+        <input type="text" id="uploadKeyInput" placeholder="builds/disk-image.raw or archives/bundle.tar.gz" />
       </div>
       <div class="form-group">
         <label>Select File</label>
@@ -1192,6 +1513,97 @@
     </div>
   </div>
 
+  <!-- User Profile & Notification Preferences Modal -->
+  <div class="modal-backdrop" id="userProfileModal">
+    <div class="modal" style="max-width:480px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="margin:0;">User Profile &amp; Notifications</h3>
+        <button class="btn btn-sm btn-ghost" onclick="closeModals()">&#10005;</button>
+      </div>
+      <p style="font-size:12px; color:var(--text-muted);">Manage your profile, notification preferences, and Slack integration.</p>
+
+      <div class="meta-grid" style="margin-bottom:14px; padding:10px;">
+        <div class="meta-item"><label>Principal / User</label><div class="mono" id="profileUsernameLabel">--</div></div>
+        <div class="meta-item"><label>Account Type</label><div class="mono" id="profileTypeLabel">--</div></div>
+      </div>
+
+      <div class="form-group">
+        <label>Display Name</label>
+        <input type="text" id="profileDisplayNameInput" placeholder="e.g. Jane Doe" />
+        <span style="font-size:11px; color:var(--text-muted); margin-top:3px;">
+          Shown on the top-right menu and notifications. Leave empty to use your username.
+        </span>
+      </div>
+
+      <div class="form-group">
+        <label>Email Address</label>
+        <input type="email" id="profileEmailInput" placeholder="e.g. user@example.com" />
+      </div>
+
+      <div class="form-group">
+        <label>Slack Member ID or Link</label>
+        <input type="text" id="profileSlackLink" placeholder="e.g. @username, U0123ABCD, or https://slack.com/..." />
+        <span style="font-size:11px; color:var(--text-muted); margin-top:4px;">
+          Set your Slack member ID (e.g. <code>U01234567</code>) or handle. When you initiate an S3 Intelligent-Tiering restore, you can be directly notified in Slack as soon as the archive file is warmed back to Frequent Access.
+        </span>
+      </div>
+
+      <div id="profileLocalPasswordSection" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border-subtle); display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:12px; font-weight:600;">Account Password</span>
+          <button class="btn btn-sm" onclick="closeModals(); openChangeOwnPasswordModal();">Change Password</button>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+        <button class="btn" onclick="closeModals()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitUserProfile()">Save Profile</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- S3 Intelligent-Tiering Archive Restore Modal -->
+  <div class="modal-backdrop" id="restoreModal">
+    <div class="modal" style="max-width:520px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">Restore from Archive</h3>
+        <button class="btn btn-sm btn-ghost" onclick="closeModals()">&#10005;</button>
+      </div>
+      <p style="font-size:12.5px; color:var(--text-muted); margin-bottom:14px;">
+        This artifact is stored in an asynchronous S3 Intelligent-Tiering Archive tier. Initiating a restore hydrates a temporary copy in Frequent Access (FA) without changing the permanent tier.
+      </p>
+
+      <div class="meta-grid" style="margin-bottom:14px; padding:10px;">
+        <div class="meta-item"><label>Artifact File</label><div class="mono" id="restoreModalFilename" style="word-break:break-all;">--</div></div>
+        <div class="meta-item"><label>Object Key</label><div class="mono" id="restoreModalKey" style="word-break:break-all; font-size:11px;">--</div></div>
+        <div class="meta-item"><label>Current S3 Tier</label><div class="mono" id="restoreModalTier">--</div></div>
+        <div class="meta-item"><label>File Size</label><div class="mono" id="restoreModalSize">--</div></div>
+      </div>
+
+      <div class="card" style="padding:14px; margin-bottom:14px; background:rgba(30,41,59,0.5); border-color:var(--border-subtle);">
+        <div style="font-size:12px; font-weight:600; color:var(--accent); margin-bottom:6px;">Slack Completion Notification</div>
+        <div class="checkbox-row" style="margin-bottom:8px;">
+          <label style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="restoreNotifySlack" onchange="toggleRestoreSlackInput()" />
+            <span>Send me a Slack message when restore is complete</span>
+          </label>
+        </div>
+        <div id="restoreSlackInputGroup" class="form-group" style="display:none; margin-top:8px;">
+          <label style="font-size:11.5px;">Slack Member ID or Link to Notify</label>
+          <input type="text" id="restoreSlackLink" placeholder="e.g. @username, U0123ABCD, or https://slack.com/..." />
+          <span style="font-size:10.5px; color:var(--text-muted); margin-top:3px;">
+            The Slack webhook configured by your admin will mention this member ID or link once the object is warm and ready for download.
+          </span>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn" onclick="closeModals()">Cancel</button>
+        <button class="btn btn-primary" id="confirmRestoreBtn" onclick="submitRestore()">Initiate Restore</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Self-Service Change Own Password Modal -->
   <div class="modal-backdrop" id="changeOwnPasswordModal">
     <div class="modal">
@@ -1266,6 +1678,31 @@
   <div class="tier-tooltip-popover" id="tierTooltipPopover"></div>
 
   <script>
+    const SVG_ICONS = {
+      chevronDown: `<svg class="tree-chevron expanded" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`,
+      chevronRight: `<svg class="tree-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`,
+      folderClosed: `<svg class="file-icon icon-folder" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>`,
+      folderOpen: `<svg class="file-icon icon-folder" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>`,
+      bucket: `<svg class="file-icon icon-bucket" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>`,
+      iso: `<svg class="file-icon icon-iso" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>`,
+      archive: `<svg class="file-icon icon-archive" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="21 8 21 21 3 21 3 8"></polyline><rect x="1" y="3" width="22" height="5" rx="1"></rect><line x1="10" y1="12" x2="14" y2="12"></line></svg>`,
+      file: `<svg class="file-icon icon-file" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>`,
+      copy: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`,
+      externalLink: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>`,
+      upload: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>`
+    };
+
+    function getFileIcon(filename) {
+      const lower = String(filename || "").toLowerCase();
+      if (lower.endsWith(".iso") || lower.endsWith(".img") || lower.endsWith(".raw")) {
+        return SVG_ICONS.iso;
+      }
+      if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz") || lower.endsWith(".zip") || lower.endsWith(".tar.bz2") || lower.endsWith(".qcow2")) {
+        return SVG_ICONS.archive;
+      }
+      return SVG_ICONS.file;
+    }
+
     let currentPrefix = "";
     let currentMe = null;
     let currentDrawerItem = null;
@@ -1278,7 +1715,7 @@
       OVERVIEW: {
         title: "Amazon S3 Intelligent-Tiering",
         badge: "AUTO COST OPTIMIZATION",
-        summary: "Automatically moves artifacts between access tiers based on consecutive days without a download — with zero performance impact or retrieval fees on synchronous tiers.",
+        summary: "Automated lifecycle management for large file archives (ISOs, VM disk images, database dumps, tarballs, and compressed datasets). Automatically moves files between access tiers based on consecutive days without a download — with zero performance impact or retrieval fees on synchronous tiers.",
         details: `
           <div class="tt-list">
             <div><strong style="color:#34d399;">FA (0–30d):</strong> Frequent Access — Hot tier, immediate millisecond downloads.</div>
@@ -1293,7 +1730,7 @@
       FA: {
         title: "Frequent Access Tier (FA)",
         badge: "HOT • 0–30 DAYS",
-        summary: "Default storage tier for newly uploaded or recently downloaded ISOs and archives.",
+        summary: "Default storage tier for newly uploaded or recently downloaded large files and archives.",
         details: `
           <div class="tt-row">
             <div><strong>Inactivity Window:</strong> Accessed within the last 30 days</div>
@@ -1340,11 +1777,23 @@
       DAA: {
         title: "Deep Archive Access Tier (DAA)",
         badge: "DEEP COLD ASYNC • 180+ DAYS",
-        summary: "Lowest-cost S3 storage tier (up to 95% storage savings) for long-term retention of legacy ISOs and archives.",
+        summary: "Lowest-cost S3 storage tier (up to 95% storage savings) for long-term retention of legacy large files and archives.",
         details: `
           <div class="tt-row">
             <div><strong>Retrieval Behavior:</strong> Requires asynchronous restoration before download</div>
             <div><strong>How to Download:</strong> Click <strong>Restore</strong> to trigger <code>s3:RestoreObject</code> (completes within 12 hours). Once restored, the artifact warms back to <strong>FA</strong>.</div>
+          </div>
+        `
+      },
+      RESTORE: {
+        title: "S3 Glacier Archive Retrieval (Restore)",
+        badge: "GLACIER RETRIEVAL",
+        summary: "This object is stored in an asynchronous Glacier tier (Archive Access or Deep Archive Access). Direct downloads are paused until restored.",
+        details: `
+          <div class="tt-row">
+            <div><strong>What Restore Does:</strong> Dispatches an <code>s3:RestoreObject</code> API request to hydrate a temporary retrieval copy in S3 Frequent Access (FA).</div>
+            <div><strong>Retrieval Times:</strong> Archive Access (AA) typically restores in 3–5 hours (or 1–5 min expedited). Deep Archive Access (DAA) restores within 12 hours.</div>
+            <div><strong>Download Availability:</strong> Once restored, the object becomes immediately downloadable via the Web UI and <code>/raw/</code> HTML directory index during the restore retention period.</div>
           </div>
         `
       }
@@ -1353,10 +1802,11 @@
     function showTierTooltip(evt, tierKey) {
       const pop = document.getElementById("tierTooltipPopover");
       const info = TIER_EXPLANATIONS[tierKey] || TIER_EXPLANATIONS.OVERVIEW;
+      const badgeClass = (tierKey === 'OVERVIEW' || tierKey === 'RESTORE') ? 'tier-IA' : `tier-${tierKey}`;
       pop.innerHTML = `
         <div class="tt-title">
           <span>${info.title}</span>
-          <span class="badge tier-${tierKey === 'OVERVIEW' ? 'IA' : tierKey}" style="font-size:10px; padding:1px 6px;">${info.badge}</span>
+          <span class="badge ${badgeClass}" style="font-size:10px; padding:1px 6px;">${info.badge}</span>
         </div>
         <div>${info.summary}</div>
         ${info.details}
@@ -1430,9 +1880,16 @@
           errBox.style.display = "none";
         }
       }
-      document.getElementById("currentUserBadge").style.display = "none";
-      document.getElementById("changeOwnPasswordBtn").style.display = "none";
-      document.getElementById("logoutBtn").style.display = "none";
+      const cancelBtn = document.getElementById("loginCancelBtn");
+      if (cancelBtn) {
+        cancelBtn.style.display = (currentMe && currentMe.principal && currentMe.principal.type === "ANONYMOUS") ? "inline-flex" : "none";
+      }
+      const gateDesc = document.getElementById("loginGateDesc");
+      if (gateDesc) {
+        gateDesc.textContent = (currentMe && currentMe.principal && currentMe.principal.type === "ANONYMOUS")
+          ? "Sign in with a local account or SSO identity to manage artifacts."
+          : "Sign in with a local account or SSO identity.";
+      }
     }
 
     function hideLoginOverlay() {
@@ -1466,13 +1923,83 @@
     }
 
     async function submitLogout() {
+      closeUserDropdown();
       await fetch("/auth/logout", {
         method: "POST",
         headers: { "Accept": "application/json" }
       });
       currentMe = null;
-      showLoginOverlay();
       showToast("Signed out");
+      await init();
+    }
+
+    function toggleUserDropdown(event) {
+      if (event) event.stopPropagation();
+      const menu = document.getElementById("userDropdownMenu");
+      const btn = document.getElementById("userMenuBtn");
+      if (!menu) return;
+      const isOpen = menu.classList.contains("open");
+      if (isOpen) {
+        closeUserDropdown();
+      } else {
+        menu.classList.add("open");
+        if (btn) {
+          btn.classList.add("active");
+          btn.setAttribute("aria-expanded", "true");
+        }
+      }
+    }
+
+    function closeUserDropdown() {
+      const menu = document.getElementById("userDropdownMenu");
+      const btn = document.getElementById("userMenuBtn");
+      if (menu) menu.classList.remove("open");
+      if (btn) {
+        btn.classList.remove("active");
+        btn.setAttribute("aria-expanded", "false");
+      }
+    }
+
+    // Close user dropdown when clicking outside
+    document.addEventListener("click", (e) => {
+      const dropdown = document.getElementById("userDropdownWrapper");
+      if (dropdown && !dropdown.contains(e.target)) {
+        closeUserDropdown();
+      }
+    });
+
+    function openUserProfileModal() {
+      if (!currentMe || !currentMe.principal) return;
+      const p = currentMe.principal;
+      document.getElementById("profileUsernameLabel").textContent = p.username || p.id || p.email || "Unknown";
+      document.getElementById("profileTypeLabel").textContent = p.type || "LOCAL_USER";
+      document.getElementById("profileDisplayNameInput").value = p.display_name || "";
+      document.getElementById("profileEmailInput").value = p.email || "";
+      document.getElementById("profileSlackLink").value = p.slack_link || "";
+      const passSec = document.getElementById("profileLocalPasswordSection");
+      if (passSec) {
+        passSec.style.display = (p.type === "LOCAL_USER") ? "block" : "none";
+      }
+      document.getElementById("userProfileModal").classList.add("open");
+    }
+
+    async function submitUserProfile() {
+      const display_name = document.getElementById("profileDisplayNameInput").value.trim();
+      const email = document.getElementById("profileEmailInput").value.trim();
+      const slack_link = document.getElementById("profileSlackLink").value.trim();
+      const res = await fetch("/api/v1/auth/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name, email, slack_link })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || "Failed to update profile");
+        return;
+      }
+      closeModals();
+      await refreshMe();
+      showToast("Profile updated successfully!");
     }
 
     function openChangeOwnPasswordModal() {
@@ -1532,19 +2059,48 @@
 
       const p = currentMe.principal || {};
       const perm = currentMe.effective_permissions || {};
-      const userBadge = document.getElementById("currentUserBadge");
-      if (userBadge) {
-        userBadge.textContent = `${p.username || p.id || p.email} (${p.type === 'LOCAL_USER' ? 'Local' : p.type || 'User'})`;
-        userBadge.style.display = "inline-flex";
+      const isAnon = p.type === "ANONYMOUS";
+
+      const anonBadge = document.getElementById("anonBadge");
+      if (anonBadge) {
+        anonBadge.style.display = isAnon ? "inline-flex" : "none";
       }
-      const changePassBtn = document.getElementById("changeOwnPasswordBtn");
-      if (changePassBtn) {
-        changePassBtn.style.display = (p.type === "LOCAL_USER") ? "inline-flex" : "none";
+      const signInBtn = document.getElementById("signInBtn");
+      if (signInBtn) {
+        signInBtn.style.display = isAnon ? "inline-flex" : "none";
       }
-      const logoutBtn = document.getElementById("logoutBtn");
-      if (logoutBtn) {
-        logoutBtn.style.display = "inline-flex";
+
+      const userDropdownWrapper = document.getElementById("userDropdownWrapper");
+      if (userDropdownWrapper) {
+        userDropdownWrapper.style.display = isAnon ? "none" : "inline-block";
       }
+
+      if (!isAnon) {
+        const username = p.username || p.id || p.email || "User";
+        const displayName = (p.display_name && p.display_name.trim() !== "") ? p.display_name.trim() : username;
+        const roleStr = p.type === "LOCAL_USER" ? "Local Account" : (p.type || "User");
+        const userMenuBtn = document.getElementById("userMenuBtn");
+        if (userMenuBtn) {
+          userMenuBtn.title = `Account Menu (${displayName})`;
+        }
+        const userMenuUsername = document.getElementById("userMenuUsername");
+        if (userMenuUsername) {
+          userMenuUsername.textContent = displayName;
+        }
+        const dropdownUserName = document.getElementById("dropdownUserName");
+        if (dropdownUserName) {
+          dropdownUserName.textContent = displayName;
+        }
+        const dropdownUserRole = document.getElementById("dropdownUserRole");
+        if (dropdownUserRole) {
+          dropdownUserRole.textContent = (displayName !== username && username) ? `@${username} • ${roleStr}` : roleStr;
+        }
+        const dropdownChangePassBtn = document.getElementById("dropdownChangePassBtn");
+        if (dropdownChangePassBtn) {
+          dropdownChangePassBtn.style.display = (p.type === "LOCAL_USER") ? "flex" : "none";
+        }
+      }
+
       const settingsTabBtn = document.getElementById("tabSettingsBtn");
       if (settingsTabBtn) {
         settingsTabBtn.style.display = perm.is_admin ? "inline-flex" : "none";
@@ -1566,7 +2122,7 @@
         cat = "local-users";
       }
       currentSettingsCategory = cat || "buckets";
-      const categories = ["buckets", "local-users", "permissions", "sso", "jwt", "storage"];
+      const categories = ["buckets", "local-users", "permissions", "sso", "jwt", "storage", "logs"];
       for (const c of categories) {
         const pane = document.getElementById(`settingsPane-${c}`);
         const btn = document.getElementById(`settingsTabBtn-${c}`);
@@ -1575,7 +2131,7 @@
       }
       const saveActions = document.getElementById("settingsSaveToolbarActions");
       if (saveActions) {
-        const modalManaged = (currentSettingsCategory === "local-users" || currentSettingsCategory === "permissions");
+        const modalManaged = (currentSettingsCategory === "local-users" || currentSettingsCategory === "permissions" || currentSettingsCategory === "logs");
         saveActions.style.display = modalManaged ? "none" : "inline-flex";
       }
       if (currentSettingsCategory === "local-users") {
@@ -1584,11 +2140,13 @@
       } else if (currentSettingsCategory === "permissions") {
         loadGrants();
         loadAppGroups();
+      } else if (currentSettingsCategory === "logs") {
+        loadAllLogs();
       }
     }
 
     function switchTab(tab) {
-      if (tab === "local-users" || tab === "permissions" || tab === "service-accounts" || tab === "sso" || tab === "jwt" || tab === "storage") {
+      if (tab === "local-users" || tab === "permissions" || tab === "service-accounts" || tab === "sso" || tab === "jwt" || tab === "storage" || tab === "logs") {
         switchTab("settings");
         switchSettingsCategory(tab);
         return;
@@ -1883,11 +2441,21 @@
       renderJWTProviderRows();
 
       document.getElementById("setDefaultTreeState").value = s.default_tree_state || "expanded";
+      document.getElementById("setEnableAnonymousAccess").checked = !!s.anonymous_access_enabled;
       document.getElementById("setEnableAutoindex").checked = s.enable_html_autoindex !== false;
       document.getElementById("setEnableSidecars").checked = s.enable_checksum_sidecars !== false;
       document.getElementById("setRestoreDays").value = s.default_restore_days || 7;
       document.getElementById("setRestoreTier").value = s.default_restore_tier || "Standard";
       document.getElementById("setLogRetentionDays").value = s.access_log_retention_days || 90;
+
+      const enableSlackEl = document.getElementById("setEnableSlack");
+      if (enableSlackEl) {
+        enableSlackEl.checked = !!s.slack_notifications_enabled;
+      }
+      const slackWebhookUrlEl = document.getElementById("setSlackWebhookUrl");
+      if (slackWebhookUrlEl) {
+        slackWebhookUrlEl.value = s.slack_webhook_url || "";
+      }
 
       configuredAllowedExtensions = s.allowed_file_extensions || [];
       const extInput = document.getElementById("setAllowedExtensions");
@@ -1931,12 +2499,15 @@
       const payload = {
         repository_title: document.getElementById("setRepoTitle").value.trim(),
         default_tree_state: document.getElementById("setDefaultTreeState").value,
+        anonymous_access_enabled: document.getElementById("setEnableAnonymousAccess").checked,
         enable_html_autoindex: document.getElementById("setEnableAutoindex").checked,
         enable_checksum_sidecars: document.getElementById("setEnableSidecars").checked,
         allowed_file_extensions: allowedExts,
         default_restore_days: parseInt(document.getElementById("setRestoreDays").value, 10) || 7,
         default_restore_tier: document.getElementById("setRestoreTier").value,
         access_log_retention_days: parseInt(document.getElementById("setLogRetentionDays").value, 10) || 90,
+        slack_notifications_enabled: document.getElementById("setEnableSlack") ? document.getElementById("setEnableSlack").checked : false,
+        slack_webhook_url: document.getElementById("setSlackWebhookUrl") ? document.getElementById("setSlackWebhookUrl").value.trim() : "",
         sso_providers: configuredSSOProviders,
         jwt_providers: configuredJWTProviders,
         buckets: validBuckets
@@ -1963,6 +2534,94 @@
         expandAllTree();
       }
       showToast("Settings saved!");
+    }
+
+    async function testSlackWebhook() {
+      const webhook_url = document.getElementById("setSlackWebhookUrl") ? document.getElementById("setSlackWebhookUrl").value.trim() : "";
+      if (!webhook_url) {
+        showToast("Please enter a Slack Webhook URL to test");
+        return;
+      }
+      const res = await fetch("/api/v1/admin/slack/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ webhook_url })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showToast(data.message || "Test Slack notification sent successfully!");
+      } else {
+        showToast("Slack test failed: " + (data.error || "Unknown error"));
+      }
+    }
+
+    async function loadAllLogs() {
+      const actionEl = document.getElementById("allLogsActionFilter");
+      const actorEl = document.getElementById("allLogsActorFilter");
+      const keyEl = document.getElementById("allLogsKeyFilter");
+      const limitEl = document.getElementById("allLogsLimitSelect");
+
+      const action = actionEl ? actionEl.value : "";
+      const actor = actorEl ? actorEl.value.trim() : "";
+      const key = keyEl ? keyEl.value.trim() : "";
+      const limit = limitEl ? limitEl.value : "100";
+
+      const params = new URLSearchParams();
+      if (action) params.set("action", action);
+      if (actor) params.set("actor", actor);
+      if (key) params.set("key", key);
+      if (limit) params.set("limit", limit);
+
+      const tbody = document.getElementById("allLogsTableBody");
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:var(--text-muted);">Loading access and audit logs...</td></tr>`;
+      }
+
+      const res = await fetch(`/api/v1/admin/logs?${params.toString()}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        if (tbody) {
+          tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:#fca5a5;">Failed to load logs: ${escapeHtml(err.error || 'Permission denied')}</td></tr>`;
+        }
+        return;
+      }
+      const data = await res.json();
+      const logs = Array.isArray(data) ? data : (data.logs || []);
+      if (!tbody) return;
+      if (!logs || !logs.length) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:var(--text-muted);">No access logs found matching criteria.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = logs.map(l => {
+        let badgeColor = "#38bdf8";
+        let badgeBg = "rgba(56,189,248,0.15)";
+        if (l.action === "UPLOAD") {
+          badgeColor = "#4ade80"; badgeBg = "rgba(74,222,128,0.15)";
+        } else if (l.action === "DELETE") {
+          badgeColor = "#f87171"; badgeBg = "rgba(248,113,113,0.15)";
+        } else if (l.action && l.action.startsWith("RESTORE")) {
+          badgeColor = "#fbbf24"; badgeBg = "rgba(251,191,36,0.15)";
+        } else if (l.action === "TIER_CHANGE") {
+          badgeColor = "#c084fc"; badgeBg = "rgba(192,132,252,0.15)";
+        } else if (l.action === "LOGIN") {
+          badgeColor = "#34d399"; badgeBg = "rgba(52,211,153,0.15)";
+        } else if (l.action === "LOGOUT") {
+          badgeColor = "#94a3b8"; badgeBg = "rgba(148,163,184,0.15)";
+        }
+        const dateStr = l.timestamp ? new Date(l.timestamp).toISOString().replace("T", " ").substring(0, 19) : "--";
+        return `
+          <tr>
+            <td class="mono" style="font-size:12px; white-space:nowrap;">${escapeHtml(dateStr)}</td>
+            <td><span class="badge" style="background:${badgeBg}; color:${badgeColor}; font-weight:700;">${escapeHtml(l.action)}</span></td>
+            <td class="mono" style="font-size:12px;">${escapeHtml(l.principal_id || l.actor || "anonymous")}</td>
+            <td class="mono" style="font-size:12px; color:var(--text-muted);">${escapeHtml(l.client_ip || "--")}</td>
+            <td class="mono" style="font-size:12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(l.object_key || l.key || '')}">${escapeHtml(l.object_key || l.key || "--")}</td>
+            <td class="mono" style="font-size:12px;">${formatBytes(l.bytes_sent)}</td>
+            <td style="font-size:12px; color:var(--text-muted); max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(l.user_agent || '')}">${escapeHtml(l.user_agent || "--")}</td>
+          </tr>
+        `;
+      }).join("");
     }
 
     function renderBreadcrumbs(prefix) {
@@ -2161,18 +2820,22 @@
         const lastAcc = e.last_accessed_at ? new Date(e.last_accessed_at).toISOString().replace("T", " ").substring(0, 19) : "--";
         const safeKeyAttr = escapeJsAttr(e.key);
         const safeTier = escapeHtml(e.intelligent_tier);
+        const iconSvg = getFileIcon(e.displayName);
+        const safeSha = escapeJsAttr(e.sha256 || "");
+
         rows += `
           <tr class="tree-file-row">
             <td>
               <div class="tree-cell">
                 ${renderIndentGuides(e.depth)}
-                <span style="display:inline-block; width:18px;"></span>
-                <span style="cursor:pointer; font-weight:600; color:var(--text-main);" onclick="openItemDrawer('${safeKeyAttr}')" title="${escapeHtml(e.key)}">
-                  &#128191; ${escapeHtml(e.displayName)}
+                <span style="display:inline-block; width:20px;"></span>
+                <span class="file-icon">${iconSvg}</span>
+                <span style="cursor:pointer; font-weight:600; color:var(--text-main); margin-left:4px;" onclick="openItemDrawer('${safeKeyAttr}')" title="${escapeHtml(e.key)}">
+                  ${escapeHtml(e.displayName)}
                 </span>
               </div>
             </td>
-            <td class="mono">${formatBytes(e.size)}</td>
+            <td class="mono col-size">${formatBytes(e.size)}</td>
             <td>
               <span class="badge tier-${safeTier} tier-hover-trigger"
                     onmouseenter="showTierTooltip(event, '${escapeJsAttr(e.intelligent_tier)}')"
@@ -2183,13 +2846,18 @@
             </td>
             <td class="mono" style="color:var(--text-muted);">${lastAcc}</td>
             <td>
-              <div style="display:flex; gap:6px;">
+              <div style="display:flex; align-items:center; gap:6px;">
+                ${e.sha256 ? `
+                  <button class="btn btn-sm btn-ghost mono" onclick="copyText('${safeSha}')" title="Copy SHA-256: ${escapeHtml(e.sha256)}">
+                    ${SVG_ICONS.copy} SHA-256
+                  </button>` : ''
+                }
                 ${isArchived
-                  ? `<button class="btn btn-sm btn-primary" onclick="openItemDrawer('${safeKeyAttr}')">Restore</button>`
-                  : `<a class="btn btn-sm" href="/api/v1/objects/${encodeURI(e.key)}/download">Download</a>`
+                  ? `<button class="btn btn-sm btn-primary tier-hover-trigger" onmouseenter="showTierTooltip(event, 'RESTORE')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()" onclick="openRestoreModal('${safeKeyAttr}')">Restore</button>`
+                  : `<a class="btn btn-sm btn-outline-primary" href="/api/v1/objects/${encodeURI(e.key)}/download" title="Download ${escapeHtml(e.displayName)}">Download</a>`
                 }
                 <button class="btn btn-sm" onclick="openItemDrawer('${safeKeyAttr}')">Details</button>
-                ${perm && perm.can_delete ? `<button class="btn btn-sm btn-danger" onclick="deleteObject('${safeKeyAttr}')">Delete</button>` : ''}
+                ${perm && perm.can_delete ? `<button class="btn btn-sm btn-danger" onclick="deleteObject('${safeKeyAttr}')" title="Delete object">Delete</button>` : ''}
               </div>
             </td>
           </tr>`;
@@ -2202,31 +2870,44 @@
 
         for (const dir of dirEntries) {
           const isCollapsed = collapsedPrefixes.has(dir.prefix);
-          const chevron = isCollapsed ? "&#9656;" : "&#9662;";
-          const folderIcon = dir.isBucketRoot ? "&#128452;" : (isCollapsed ? "&#128193;" : "&#128194;");
+          const chevron = isCollapsed ? SVG_ICONS.chevronRight : SVG_ICONS.chevronDown;
+          const folderIcon = dir.isBucketRoot ? SVG_ICONS.bucket : (isCollapsed ? SVG_ICONS.folderClosed : SVG_ICONS.folderOpen);
           const typeDesc = dir.isBucketRoot
-            ? `<span style="color:var(--accent); font-size:12px; font-weight:600;" title="s3://${escapeHtml(dir.bucketName)} (${escapeHtml(dir.bucketRegion || 'us-east-1')})">S3 Bucket</span>`
-            : `<span style="color:var(--text-dim); font-size:12px;">Folder (${escapeHtml(dir.rawPrefix || dir.prefix)})</span>`;
+            ? `<span class="badge" style="background:rgba(16,185,129,0.12); color:#34d399; border:1px solid rgba(16,185,129,0.3);" title="s3://${escapeHtml(dir.bucketName)} (${escapeHtml(dir.bucketRegion || 'us-east-1')})">S3 Bucket</span>`
+            : `<span style="color:var(--text-dim);">&mdash;</span>`;
           const rawHref = `/raw/${encodeURI(dir.rawPrefix || '')}`;
           const safePrefixAttr = escapeJsAttr(dir.prefix);
 
           rows += `
-            <tr class="tree-folder-row">
+            <tr class="tree-folder-row"
+                ondragover="onFolderDragOver(event, this)"
+                ondragleave="onFolderDragLeave(event, this)"
+                ondrop="onFolderDrop(event, this, '${safePrefixAttr}')">
               <td>
                 <div class="tree-cell">
                   ${renderIndentGuides(dir.depth)}
                   <span class="tree-toggle" onclick="toggleTreeFolder('${safePrefixAttr}')" title="${isCollapsed ? 'Expand folder' : 'Collapse folder'}">${chevron}</span>
                   <span class="tree-folder-label" onclick="toggleTreeFolder('${safePrefixAttr}')">
-                    ${folderIcon} ${escapeHtml(dir.name)}/
+                    <span class="file-icon">${folderIcon}</span>
+                    <span>${escapeHtml(dir.name)}/</span>
                   </span>
                   <span class="tree-folder-meta">(${dir.totalFiles} artifact${dir.totalFiles === 1 ? '' : 's'})</span>
                 </div>
               </td>
-              <td class="mono" style="color:var(--text-muted);">${formatBytes(dir.totalSize)}</td>
+              <td class="mono col-size" style="color:var(--text-muted);">${formatBytes(dir.totalSize)}</td>
               <td>${typeDesc}</td>
-              <td class="mono">--</td>
+              <td class="mono" style="color:var(--text-dim);">--</td>
               <td>
-                <a class="btn btn-sm" href="${escapeHtml(rawHref)}" target="_blank">HTML Index</a>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <a class="btn btn-sm btn-ghost" href="${escapeHtml(rawHref)}" target="_blank" title="Open /raw/ HTML Directory Index">
+                    ${SVG_ICONS.externalLink} /raw/ Index
+                  </a>
+                  ${perm && perm.can_upload ? `
+                    <button class="btn btn-sm btn-ghost" onclick="openUploadModal('${safePrefixAttr}')" title="Upload directly into this folder">
+                      ${SVG_ICONS.upload} Upload
+                    </button>` : ''
+                  }
+                </div>
               </td>
             </tr>`;
 
@@ -2261,19 +2942,126 @@
       document.getElementById("drawerSha1Link").href = `/raw/${meta.key}.sha1`;
       document.getElementById("drawerRawUrl").textContent = `${window.location.origin}/raw/${meta.key}`;
 
-      const isArchived = (meta.intelligent_tier === "AA" || meta.intelligent_tier === "DAA") && meta.restore_status !== "RESTORED";
-      document.getElementById("drawerRestoreBtn").style.display = isArchived ? "inline-flex" : "none";
-      document.getElementById("drawerTierNote").textContent = isArchived
-        ? "Object is in an asynchronous Archive tier. Click Restore to initiate s3:RestoreObject back to Frequent Access (FA)."
-        : "Object is in a synchronous millisecond-latency tier. Any download automatically resets its tier to Frequent Access (FA).";
+      const uploadDate = meta.uploaded_at ? new Date(meta.uploaded_at) : (meta.updated_at ? new Date(meta.updated_at) : null);
+      const uploadedDateStr = uploadDate ? uploadDate.toISOString().replace('T', ' ').substring(0, 19) + ' UTC' : '--';
+      const uploadedSubEl = document.getElementById("drawerUploadedSub");
+      if (uploadedSubEl) {
+        uploadedSubEl.innerHTML = `Uploaded on <span class="mono" style="color:var(--text-main); font-weight:600;">${uploadedDateStr}</span>${meta.uploaded_by ? ` by <span class="mono" style="color:var(--accent); font-weight:600;">${escapeHtml(meta.uploaded_by)}</span>` : ''}`;
+      }
 
+      const tier = meta.intelligent_tier || "FA";
+      const isArchived = (tier === "AA" || tier === "DAA");
+      const isRestored = meta.restore_status === "RESTORED";
+      const isRestoring = meta.restore_status === "IN_PROGRESS";
+
+      // Tier badge with hover tooltip
+      const tierSafe = escapeHtml(tier);
+      const tierLabelSafe = escapeHtml(meta.tier_label || tier);
+      const tierAttrSafe = escapeJsAttr(tier);
+      const tierBadgeEl = document.getElementById("drawerTierBadge");
+      if (tierBadgeEl) {
+        tierBadgeEl.innerHTML = `
+          <span class="badge tier-${tierSafe} tier-hover-trigger"
+                style="cursor:pointer;"
+                onmouseenter="showTierTooltip(event, '${tierAttrSafe}')"
+                onmousemove="moveTierTooltip(event)"
+                onmouseleave="hideTierTooltip()">
+            ${tierLabelSafe} <span class="tier-info-icon" style="border-color:currentColor; color:inherit; background:transparent;">?</span>
+          </span>
+        `;
+      }
+
+      // Restore / Availability Status Badge
+      const restoreBadgeEl = document.getElementById("drawerRestoreBadge");
+      if (restoreBadgeEl) {
+        if (isRestored) {
+          restoreBadgeEl.innerHTML = `<span class="badge" style="background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4);" title="Restored copy is online in Frequent Access and ready for download"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#34d399; margin-right:4px;"></span>RESTORED (Ready)</span>`;
+        } else if (isRestoring) {
+          restoreBadgeEl.innerHTML = `<span class="badge" style="background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4);" title="s3:RestoreObject request is in progress"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#fbbf24; margin-right:4px; animation:pulse 1.5s infinite;"></span>RESTORING</span>`;
+        } else if (isArchived) {
+          restoreBadgeEl.innerHTML = `<span class="badge" style="background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.35);" title="Asynchronous Glacier storage - requires s3:RestoreObject"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#f87171; margin-right:4px;"></span>ARCHIVED</span>`;
+        } else {
+          restoreBadgeEl.innerHTML = `<span class="badge" style="background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.35);" title="Instant synchronous download available"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#60a5fa; margin-right:4px;"></span>ONLINE</span>`;
+        }
+      }
+
+      // Detailed explanatory note
+      let noteHtml = "";
+      if (tier === "FA") {
+        noteHtml = `<strong>Frequent Access (FA):</strong> Active hot storage tier with synchronous millisecond retrieval latency. Direct downloads are immediately available. Automatic transition to <strong>Infrequent Access (IA)</strong> occurs after 30 consecutive days of inactivity.`;
+      } else if (tier === "IA") {
+        noteHtml = `<strong>Infrequent Access (IA):</strong> Synchronous millisecond retrieval latency (~40% storage cost savings). Any download automatically promotes this object back to <strong>Frequent Access (FA)</strong>. Automatic transition to <strong>Archive Instant Access (AIA)</strong> occurs after 90 days.`;
+      } else if (tier === "AIA") {
+        noteHtml = `<strong>Archive Instant Access (AIA):</strong> Synchronous millisecond retrieval latency at archive price point (~68% savings). Any download automatically promotes this object back to <strong>Frequent Access (FA)</strong>.`;
+      } else if (tier === "AA") {
+        if (isRestored) {
+          const expNote = meta.restore_expiry ? ` (temporary copy expires ${new Date(meta.restore_expiry).toISOString().replace('T', ' ').substring(0, 16)} UTC)` : "";
+          noteHtml = `<strong>Archive Access (AA) &mdash; Restored:</strong> A temporary hydrated copy is available in Frequent Access and <strong>ready for download</strong>${expNote}. The master object remains safely preserved in Archive Access (AA).`;
+        } else if (isRestoring) {
+          noteHtml = `<strong>Archive Access (AA) &mdash; In Progress:</strong> An <code>s3:RestoreObject</code> retrieval request is currently warming this object back to Frequent Access. Typical retrieval time is 3&ndash;5 hours.`;
+        } else {
+          noteHtml = `<strong>Archive Access (AA):</strong> Stored in an asynchronous Glacier-backed tier (~71% savings). Direct downloads are paused until an <code>s3:RestoreObject</code> retrieval request is initiated (typical hydration time: 3&ndash;5 hours).`;
+        }
+      } else if (tier === "DAA") {
+        if (isRestored) {
+          const expNote = meta.restore_expiry ? ` (temporary copy expires ${new Date(meta.restore_expiry).toISOString().replace('T', ' ').substring(0, 16)} UTC)` : "";
+          noteHtml = `<strong>Deep Archive Access (DAA) &mdash; Restored:</strong> A temporary hydrated copy is available in Frequent Access and <strong>ready for download</strong>${expNote}. The master object remains safely preserved in Deep Archive Access (DAA).`;
+        } else if (isRestoring) {
+          noteHtml = `<strong>Deep Archive Access (DAA) &mdash; In Progress:</strong> An <code>s3:RestoreObject</code> retrieval request is currently warming this object back to Frequent Access. Typical retrieval time is up to 12 hours.`;
+        } else {
+          noteHtml = `<strong>Deep Archive Access (DAA):</strong> Stored in an asynchronous Glacier Deep Archive tier (~95% savings). Direct downloads are paused until an <code>s3:RestoreObject</code> retrieval request is initiated (typical hydration time: up to 12 hours).`;
+        }
+      } else {
+        noteHtml = `Synchronous tier with immediate millisecond-latency download capability.`;
+      }
+      document.getElementById("drawerTierNote").innerHTML = noteHtml;
+
+      // Action Buttons
+      const downloadBtn = document.getElementById("drawerDownloadBtn");
+      const restoreBtn = document.getElementById("drawerRestoreBtn");
+      const restoringBtn = document.getElementById("drawerRestoringBtn");
+
+      if (isArchived && !isRestored && !isRestoring) {
+        if (downloadBtn) downloadBtn.style.display = "none";
+        if (restoreBtn) restoreBtn.style.display = "inline-flex";
+        if (restoringBtn) restoringBtn.style.display = "none";
+      } else if (isRestoring) {
+        if (downloadBtn) downloadBtn.style.display = "none";
+        if (restoreBtn) restoreBtn.style.display = "none";
+        if (restoringBtn) restoringBtn.style.display = "inline-flex";
+      } else {
+        // Online or Restored
+        if (downloadBtn) {
+          downloadBtn.style.display = "inline-flex";
+          downloadBtn.href = `/api/v1/objects/${encodeURI(meta.key)}/download`;
+          downloadBtn.textContent = isRestored ? "Download Restored File" : "Download File";
+        }
+        if (restoreBtn) restoreBtn.style.display = "none";
+        if (restoringBtn) restoringBtn.style.display = "none";
+      }
+
+      // Simulate Tier Transition visibility
+      const simulateSel = document.getElementById("drawerSimulateTier");
+      if (simulateSel) {
+        const canChangeTier = currentMe && (
+          (currentMe.principal && currentMe.principal.role === "ADMIN") ||
+          (currentMe.effective_permissions && (currentMe.effective_permissions.is_admin || currentMe.effective_permissions.can_upload))
+        );
+        simulateSel.style.display = canChangeTier ? "inline-block" : "none";
+        simulateSel.value = "";
+      }
+
+      const lastAccStr = meta.last_accessed_at ? (new Date(meta.last_accessed_at).toISOString().replace('T',' ').substring(0,19) + ' UTC') : '--';
+      const uploadedAtStr = meta.uploaded_at ? (new Date(meta.uploaded_at).toISOString().replace('T',' ').substring(0,19) + ' UTC') : '--';
       document.getElementById("drawerMetaGrid").innerHTML = `
         <div class="meta-item"><label>Size</label><div class="mono">${formatBytes(meta.size)} (${meta.size.toLocaleString()} B)</div></div>
-        <div class="meta-item"><label>Intelligent-Tiering</label><div><span class="badge tier-${escapeHtml(meta.intelligent_tier)} tier-hover-trigger" onmouseenter="showTierTooltip(event, '${escapeJsAttr(meta.intelligent_tier)}')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">${escapeHtml(meta.tier_label)} <span class="tier-info-icon" style="border-color:currentColor; color:inherit; background:transparent;">?</span></span></div></div>
+        <div class="meta-item"><label>Intelligent-Tiering</label><div><span class="badge tier-${tierSafe} tier-hover-trigger" style="cursor:pointer;" onmouseenter="showTierTooltip(event, '${tierAttrSafe}')" onmousemove="moveTierTooltip(event)" onmouseleave="hideTierTooltip()">${tierLabelSafe} <span class="tier-info-icon" style="border-color:currentColor; color:inherit; background:transparent;">?</span></span></div></div>
         <div class="meta-item"><label>Uploaded By</label><div class="mono">${escapeHtml(meta.uploaded_by || 'system')}</div></div>
+        <div class="meta-item"><label>Uploaded Date</label><div class="mono">${uploadedDateStr}</div></div>
         <div class="meta-item"><label>Total Downloads</label><div class="mono">${meta.download_count || 0}</div></div>
-        <div class="meta-item"><label>Last Accessed</label><div class="mono">${new Date(meta.last_accessed_at).toISOString().replace('T',' ').substring(0,19)} UTC</div></div>
-        <div class="meta-item"><label>Content-Type</label><div class="mono">${escapeHtml(meta.content_type)}</div></div>
+        <div class="meta-item"><label>Last Accessed</label><div class="mono">${lastAccStr}</div></div>
+        <div class="meta-item"><label>Content-Type</label><div class="mono">${escapeHtml(meta.content_type || 'application/octet-stream')}</div></div>
+        <div class="meta-item"><label>S3 Storage Class</label><div class="mono">${escapeHtml(meta.storage_class || 'INTELLIGENT_TIERING')}</div></div>
       `;
 
       document.getElementById("itemDrawerBackdrop").classList.add("open");
@@ -2308,52 +3096,161 @@
       `).join("");
     }
 
+    let targetRestoreItem = null;
+
+    function toggleRestoreSlackInput() {
+      const cb = document.getElementById("restoreNotifySlack");
+      const grp = document.getElementById("restoreSlackInputGroup");
+      if (grp) {
+        grp.style.display = (cb && cb.checked) ? "block" : "none";
+      }
+    }
+
+    async function openRestoreModal(itemOrKey) {
+      if (typeof itemOrKey === "string") {
+        if (currentDrawerItem && currentDrawerItem.key === itemOrKey) {
+          targetRestoreItem = currentDrawerItem;
+        } else {
+          const res = await fetch(`/api/v1/objects/${itemOrKey}/meta`);
+          if (res.ok) {
+            targetRestoreItem = await res.json();
+          } else {
+            targetRestoreItem = { key: itemOrKey, filename: itemOrKey.split("/").pop(), intelligent_tier: "AA", size: 0 };
+          }
+        }
+      } else if (itemOrKey) {
+        targetRestoreItem = itemOrKey;
+      } else if (currentDrawerItem) {
+        targetRestoreItem = currentDrawerItem;
+      }
+      if (!targetRestoreItem) return;
+
+      const filename = targetRestoreItem.filename || targetRestoreItem.key.split("/").pop();
+      document.getElementById("restoreModalFilename").textContent = filename;
+      document.getElementById("restoreModalKey").textContent = targetRestoreItem.key;
+      document.getElementById("restoreModalTier").textContent = targetRestoreItem.tier_label || targetRestoreItem.intelligent_tier || "Archive Access (AA)";
+      document.getElementById("restoreModalSize").textContent = targetRestoreItem.size ? formatBytes(targetRestoreItem.size) : "--";
+
+      const userSlack = (currentMe && currentMe.principal && currentMe.principal.slack_link) || "";
+      const slackInput = document.getElementById("restoreSlackLink");
+      if (slackInput) {
+        slackInput.value = userSlack;
+      }
+      const cb = document.getElementById("restoreNotifySlack");
+      if (cb) {
+        cb.checked = !!userSlack;
+      }
+      toggleRestoreSlackInput();
+      document.getElementById("restoreModal").classList.add("open");
+    }
+
+    async function submitRestore() {
+      if (!targetRestoreItem) return;
+      const notifySlack = document.getElementById("restoreNotifySlack") ? document.getElementById("restoreNotifySlack").checked : false;
+      const slackLink = document.getElementById("restoreSlackLink") ? document.getElementById("restoreSlackLink").value.trim() : "";
+
+      const res = await fetch(`/api/v1/objects/${targetRestoreItem.key}/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notify_slack: notifySlack,
+          slack_link: slackLink
+        })
+      });
+      if (res.ok) {
+        closeModals();
+        showToast("Object restore initiated! (Warming back to Frequent Access)");
+        if (currentDrawerItem && currentDrawerItem.key === targetRestoreItem.key) {
+          await openItemDrawer(targetRestoreItem.key);
+        }
+        await loadDirectory(currentPrefix);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || "Failed to initiate restore");
+      }
+    }
+
     async function restoreCurrentObject() {
       if (!currentDrawerItem) return;
-      const res = await fetch(`/api/v1/objects/${currentDrawerItem.key}/restore`, { method: "POST" });
-      if (res.ok) {
-        showToast("Object restored to Frequent Access (FA)!");
-        await openItemDrawer(currentDrawerItem.key);
-        await loadDirectory(currentPrefix);
-      }
+      await openRestoreModal(currentDrawerItem);
     }
 
     async function simulateTierChange(tier) {
       if (!tier || !currentDrawerItem) return;
-      const res = await fetch(`/api/v1/objects/${currentDrawerItem.key}/tier`, {
+      const res = await fetch(`/api/v1/objects/${encodeURI(currentDrawerItem.key)}/tier`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ intelligent_tier: tier, restore_status: "NONE" })
       });
       document.getElementById("drawerSimulateTier").value = "";
       if (res.ok) {
-        showToast(`Transitioned ${currentDrawerItem.filename} to ${tier}`);
+        const displayName = currentDrawerItem.displayName || currentDrawerItem.key.split("/").pop();
+        showToast(`Transitioned ${displayName} to ${tier}`);
         await openItemDrawer(currentDrawerItem.key);
         await loadDirectory(currentPrefix);
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         showToast(err.error || "Permission denied");
       }
     }
 
-    function openUploadModal() {
+    function openUploadModal(initialPrefix, droppedFile) {
       const sel = document.getElementById("uploadBucketSelect");
       const buckets = (configuredBuckets && configuredBuckets.length)
         ? configuredBuckets
         : [{ friendly_name: "Primary Artifacts", bucket_name: (currentMe && currentMe.bucket) || "default" }];
 
-      const parts = (currentPrefix || "").split("/").filter(Boolean);
+      const prefixToUse = (typeof initialPrefix === "string" && initialPrefix) ? initialPrefix : (currentPrefix || "");
+      const parts = prefixToUse.split("/").filter(Boolean);
       const topFolder = parts[0] || "";
-      const relKey = parts.length > 1 ? parts.slice(1).join("/") + "/" : "";
+      const isTopFolderBucket = buckets.some(b => b.friendly_name === topFolder || b.bucket_name === topFolder);
+      const relKey = parts.length > 1 ? parts.slice(1).join("/") + "/" : (!isTopFolderBucket && topFolder ? topFolder + "/" : "");
 
       sel.innerHTML = buckets.map(b => {
-        const selected = (b.friendly_name === topFolder) ? "selected" : "";
+        const selected = (b.friendly_name === topFolder || b.bucket_name === topFolder) ? "selected" : "";
         return `<option value="${b.bucket_name}" ${selected}>${b.friendly_name} (${b.bucket_name})</option>`;
       }).join("");
 
-      document.getElementById("uploadKeyInput").value = relKey;
+      const keyInput = document.getElementById("uploadKeyInput");
+      const fileInput = document.getElementById("uploadFileInput");
+
+      if (droppedFile) {
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(droppedFile);
+          fileInput.files = dt.files;
+        } catch (_) {}
+        keyInput.value = (relKey || "") + droppedFile.name;
+        onFileSelected(fileInput);
+      } else {
+        keyInput.value = relKey;
+        fileInput.value = "";
+      }
+
       updateUploadModalAllowedExtensions(configuredAllowedExtensions);
       document.getElementById("uploadModal").classList.add("open");
+    }
+
+    function onFolderDragOver(evt, el) {
+      evt.preventDefault();
+      evt.stopPropagation();
+      el.classList.add("tree-drop-target");
+    }
+
+    function onFolderDragLeave(evt, el) {
+      evt.preventDefault();
+      evt.stopPropagation();
+      el.classList.remove("tree-drop-target");
+    }
+
+    function onFolderDrop(evt, el, prefix) {
+      evt.preventDefault();
+      evt.stopPropagation();
+      el.classList.remove("tree-drop-target");
+      if (evt.dataTransfer && evt.dataTransfer.files && evt.dataTransfer.files.length) {
+        const file = evt.dataTransfer.files[0];
+        openUploadModal(prefix, file);
+      }
     }
 
     function checkKeyExtensionAllowed(key) {
@@ -2798,7 +3695,49 @@
     }
 
     function closeModals() {
+      closeUserDropdown();
       document.querySelectorAll(".modal-backdrop").forEach(m => m.classList.remove("open"));
+    }
+
+    // Global keyboard shortcuts
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeUserDropdown();
+        closeModals();
+      }
+      if (e.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
+        e.preventDefault();
+        const searchInput = document.getElementById("searchInput");
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select();
+        }
+      }
+    });
+
+    // Global drag & drop on artifact browser card
+    const browserCard = document.getElementById("browserTableCard");
+    if (browserCard) {
+      browserCard.addEventListener("dragover", (e) => {
+        if (!e.target.closest(".tree-folder-row")) {
+          e.preventDefault();
+          browserCard.classList.add("tree-drop-target");
+        }
+      });
+      browserCard.addEventListener("dragleave", (e) => {
+        if (e.relatedTarget && !browserCard.contains(e.relatedTarget)) {
+          browserCard.classList.remove("tree-drop-target");
+        }
+      });
+      browserCard.addEventListener("drop", (e) => {
+        browserCard.classList.remove("tree-drop-target");
+        if (!e.target.closest(".tree-folder-row")) {
+          e.preventDefault();
+          if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+            openUploadModal(currentPrefix || "", e.dataTransfer.files[0]);
+          }
+        }
+      });
     }
 
     init();

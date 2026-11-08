@@ -49,12 +49,13 @@ type Authenticator struct {
 	store     store.MetadataStore
 	evaluator *rbac.Evaluator
 
-	cfgMu               sync.RWMutex
-	adminOIDCGroup      string
-	githubOIDCEnabled   bool
-	githubOIDCIssuerURL string
-	githubOIDCAudience  string
-	jwtProviders        []model.JWTProviderConfig
+	cfgMu                  sync.RWMutex
+	adminOIDCGroup         string
+	githubOIDCEnabled      bool
+	githubOIDCIssuerURL    string
+	githubOIDCAudience     string
+	jwtProviders           []model.JWTProviderConfig
+	anonymousAccessEnabled bool
 
 	credCacheMu sync.RWMutex
 	credCache   map[string]time.Time
@@ -73,8 +74,9 @@ func NewAuthenticator(cfg *config.Config, st store.MetadataStore, eval *rbac.Eva
 		adminOIDCGroup:      cfg.BootstrapAdminOIDCGroup,
 		githubOIDCEnabled:   cfg.GitHubOIDCEnabled,
 		githubOIDCIssuerURL: cfg.GitHubOIDCIssuerURL,
-		githubOIDCAudience:  cfg.GitHubOIDCAudience,
-		credCache:           make(map[string]time.Time),
+		githubOIDCAudience:     cfg.GitHubOIDCAudience,
+		anonymousAccessEnabled: cfg.AnonymousAccessEnabled,
+		credCache:              make(map[string]time.Time),
 		jwksKeys:            make(map[string]*rsa.PublicKey),
 	}
 	if cfg.GitHubPinnedJWKSJSON != "" {
@@ -104,6 +106,20 @@ func (a *Authenticator) UpdateAuthConfig(
 		copy(cp, jwtProviders)
 		a.jwtProviders = cp
 	}
+}
+
+// SetAnonymousAccessEnabled dynamically enables or disables unauthenticated anonymous access.
+func (a *Authenticator) SetAnonymousAccessEnabled(enabled bool) {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	a.anonymousAccessEnabled = enabled
+}
+
+// IsAnonymousAccessEnabled returns whether unauthenticated anonymous access is currently enabled.
+func (a *Authenticator) IsAnonymousAccessEnabled() bool {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	return a.anonymousAccessEnabled
 }
 
 func (a *Authenticator) getAdminOIDCGroup() string {
@@ -375,6 +391,17 @@ func (a *Authenticator) AuthenticateRequest(r *http.Request) (*model.Principal, 
 		return a.authenticateSessionCookie(ctx, cookie.Value)
 	}
 
+	// 4. Check if Anonymous Access is enabled
+	if a.IsAnonymousAccessEnabled() {
+		return &model.Principal{
+			Type:        model.PrincipalAnonymous,
+			ID:          "anonymous",
+			Username:    "anonymous",
+			DisplayName: "Anonymous Guest",
+			OIDCGroups:  []string{"anonymous"},
+		}, nil
+	}
+
 	// Anonymous access is disabled.
 	return nil, errors.New("authentication required")
 }
@@ -395,6 +422,7 @@ func (a *Authenticator) principalFromLocalUser(ctx context.Context, user *model.
 		Username:     user.Username,
 		Email:        user.Email,
 		DisplayName:  displayName,
+		SlackLink:    user.SlackLink,
 		IsLocalAdmin: user.IsAdmin,
 		OIDCGroups:   oidcGroups,
 	}

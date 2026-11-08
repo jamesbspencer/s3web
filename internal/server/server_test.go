@@ -956,3 +956,427 @@ func TestSecurityRemediationsAndEdgeCases(t *testing.T) {
 	}
 }
 
+func TestAnonymousAccessToggleAndPermissions(t *testing.T) {
+	srv, cfg := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	// 1. By default, anonymous access is disabled -> 401 Unauthorized
+	resp, err := client.Get(ts.URL + "/api/v1/me")
+	if err != nil {
+		t.Fatalf("GET /api/v1/me: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for anonymous access when disabled, got %d", resp.StatusCode)
+	}
+
+	// 2. Enable anonymous access via admin BasicAuth
+	trueVal := true
+	settingsPayload, _ := json.Marshal(map[string]interface{}{
+		"anonymous_access_enabled": &trueVal,
+		"enable_html_autoindex":    true,
+		"enable_checksum_sidecars": true,
+	})
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings", bytes.NewReader(settingsPayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	setResp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("PUT /api/v1/settings: %v", err)
+	}
+	setResp.Body.Close()
+	if setResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK updating settings, got %d", setResp.StatusCode)
+	}
+
+	// 3. Now anonymous client can access /api/v1/me and /raw/
+	resp, err = client.Get(ts.URL + "/api/v1/me")
+	if err != nil {
+		t.Fatalf("GET /api/v1/me: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for anonymous access when enabled, got %d", resp.StatusCode)
+	}
+	var me struct {
+		Principal struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"principal"`
+		EffectivePermissions struct {
+			CanRead   bool `json:"can_read"`
+			CanUpload bool `json:"can_upload"`
+			CanDelete bool `json:"can_delete"`
+			IsAdmin   bool `json:"is_admin"`
+		} `json:"effective_permissions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
+		t.Fatalf("decode me: %v", err)
+	}
+	if me.Principal.Type != "ANONYMOUS" {
+		t.Fatalf("expected principal type ANONYMOUS, got %s", me.Principal.Type)
+	}
+	if !me.EffectivePermissions.CanRead {
+		t.Fatalf("expected CanRead=true for anonymous guest")
+	}
+	if me.EffectivePermissions.CanUpload || me.EffectivePermissions.CanDelete || me.EffectivePermissions.IsAdmin {
+		t.Fatalf("expected CanUpload/CanDelete/IsAdmin=false for anonymous guest")
+	}
+
+	// Anonymous /raw/ directory index succeeds
+	rawResp, err := client.Get(ts.URL + "/raw/")
+	if err != nil {
+		t.Fatalf("GET /raw/: %v", err)
+	}
+	rawResp.Body.Close()
+	if rawResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for anonymous /raw/ when enabled, got %d", rawResp.StatusCode)
+	}
+
+	// Anonymous write operations are rejected with 403 Forbidden
+	uploadReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/test.iso", strings.NewReader("dummy"))
+	upResp, err := client.Do(uploadReq)
+	if err != nil {
+		t.Fatalf("PUT /api/v1/objects: %v", err)
+	}
+	upResp.Body.Close()
+	if upResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for anonymous upload, got %d", upResp.StatusCode)
+	}
+
+	// 4. Disable anonymous access again
+	falseVal := false
+	settingsPayload, _ = json.Marshal(map[string]interface{}{
+		"anonymous_access_enabled": &falseVal,
+	})
+	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings", bytes.NewReader(settingsPayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	setResp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("PUT /api/v1/settings: %v", err)
+	}
+	setResp.Body.Close()
+
+	// 5. Verify anonymous requests are rejected again with 401
+	resp, err = client.Get(ts.URL + "/api/v1/me")
+	if err != nil {
+		t.Fatalf("GET /api/v1/me: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized after disabling anonymous access, got %d", resp.StatusCode)
+	}
+}
+
+func TestAdminAllLogsAndSlackFeatures(t *testing.T) {
+	srv, cfg := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	// 1. Non-admin attempting to view /api/v1/admin/logs receives 403 Forbidden
+	demoLogReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/logs", nil)
+	demoLogReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	resp, err := client.Do(demoLogReq)
+	if err != nil {
+		t.Fatalf("demo get admin logs: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for non-admin on /api/v1/admin/logs, got %d", resp.StatusCode)
+	}
+
+	// 2. Admin viewing /api/v1/admin/logs receives 200 OK
+	adminLogReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/logs", nil)
+	adminLogReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp, err = client.Do(adminLogReq)
+	if err != nil {
+		t.Fatalf("admin get admin logs: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for admin on /api/v1/admin/logs, got %d", resp.StatusCode)
+	}
+	var adminLogResp struct {
+		Logs []model.AccessLogEntry `json:"logs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&adminLogResp); err != nil {
+		t.Fatalf("decode admin logs: %v", err)
+	}
+	_ = adminLogResp.Logs
+
+	// 3. Update User Profile with Display Name, Email, and Slack Link (PUT /api/v1/auth/profile)
+	profPayload, _ := json.Marshal(map[string]string{
+		"display_name": "Demo Custom User",
+		"email":        "demouser@example.com",
+		"slack_link":   "U12345678",
+	})
+	profReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/auth/profile", bytes.NewReader(profPayload))
+	profReq.Header.Set("Content-Type", "application/json")
+	profReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	resp, err = client.Do(profReq)
+	if err != nil {
+		t.Fatalf("put profile: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK updating user profile, got %d", resp.StatusCode)
+	}
+
+	// Verify profile in /api/v1/me
+	meReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/me", nil)
+	meReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	resp, err = client.Do(meReq)
+	if err != nil {
+		t.Fatalf("get me: %v", err)
+	}
+	defer resp.Body.Close()
+	var meResp struct {
+		Principal struct {
+			DisplayName string `json:"display_name"`
+			Email       string `json:"email"`
+			SlackLink   string `json:"slack_link"`
+		} `json:"principal"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&meResp); err != nil {
+		t.Fatalf("decode me response: %v", err)
+	}
+	if meResp.Principal.DisplayName != "Demo Custom User" {
+		t.Fatalf("expected display_name 'Demo Custom User', got %q", meResp.Principal.DisplayName)
+	}
+	if meResp.Principal.Email != "demouser@example.com" {
+		t.Fatalf("expected email 'demouser@example.com', got %q", meResp.Principal.Email)
+	}
+	if meResp.Principal.SlackLink != "U12345678" {
+		t.Fatalf("expected slack_link U12345678, got %q", meResp.Principal.SlackLink)
+	}
+
+	// 4. Mock Slack Webhook Server
+	var receivedSlackPayload map[string]interface{}
+	slackMockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedSlackPayload)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	}))
+	defer slackMockServer.Close()
+
+	// 5. Test Slack Webhook Endpoint (POST /api/v1/admin/slack/test)
+	testWebhookPayload, _ := json.Marshal(map[string]string{
+		"webhook_url": slackMockServer.URL,
+	})
+	testSlackReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/slack/test", bytes.NewReader(testWebhookPayload))
+	testSlackReq.Header.Set("Content-Type", "application/json")
+	testSlackReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp, err = client.Do(testSlackReq)
+	if err != nil {
+		t.Fatalf("post admin slack test: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK testing slack webhook, got %d", resp.StatusCode)
+	}
+	if receivedSlackPayload == nil || receivedSlackPayload["text"] == "" {
+		t.Fatalf("mock slack server did not receive payload: %v", receivedSlackPayload)
+	}
+
+	// 6. Save Slack Webhook in Settings
+	trueVal := true
+	settingsPayload, _ := json.Marshal(map[string]interface{}{
+		"slack_notifications_enabled": &trueVal,
+		"slack_webhook_url":           slackMockServer.URL,
+	})
+	setReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings", bytes.NewReader(settingsPayload))
+	setReq.Header.Set("Content-Type", "application/json")
+	setReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp, err = client.Do(setReq)
+	if err != nil {
+		t.Fatalf("save slack settings: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 saving slack settings, got %d", resp.StatusCode)
+	}
+
+	// 7. Test Restore with Slack Notification
+	upReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/archive.iso", strings.NewReader("sample-archive-data"))
+	upReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp, err = client.Do(upReq)
+	if err != nil {
+		t.Fatalf("upload archive.iso: %v", err)
+	}
+	resp.Body.Close()
+
+	restorePayload, _ := json.Marshal(map[string]interface{}{
+		"notify_slack": true,
+		"slack_link":   "<@U12345678>",
+	})
+	restReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/objects/archive.iso/restore", bytes.NewReader(restorePayload))
+	restReq.Header.Set("Content-Type", "application/json")
+	restReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	resp, err = client.Do(restReq)
+	if err != nil {
+		t.Fatalf("restore archive.iso: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202 Accepted from restore with slack notification, got %d", resp.StatusCode)
+	}
+
+	// 8. Verify RESTORE action appears in admin logs
+	filteredLogReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/logs?action=RESTORE", nil)
+	filteredLogReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp, err = client.Do(filteredLogReq)
+	if err != nil {
+		t.Fatalf("filtered admin logs: %v", err)
+	}
+	defer resp.Body.Close()
+	var filterResp struct {
+		Logs []model.AccessLogEntry `json:"logs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&filterResp); err != nil {
+		t.Fatalf("decode filtered logs: %v", err)
+	}
+	restoreLogs := filterResp.Logs
+	if len(restoreLogs) == 0 {
+		t.Fatalf("expected RESTORE log entry in admin logs, found none")
+	}
+	if restoreLogs[0].ObjectKey != "archive.iso" {
+		t.Fatalf("expected key archive.iso in restore log, got %s", restoreLogs[0].ObjectKey)
+	}
+
+	// 9. Verify LOGIN and LOGOUT access logs
+	loginPayload, _ := json.Marshal(map[string]string{
+		"username": "demo",
+		"password": cfg.BootstrapDemoPassword,
+	})
+	loginReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/auth/login", bytes.NewReader(loginPayload))
+	loginReq.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(loginReq)
+	if err != nil {
+		t.Fatalf("auth login: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /auth/login, got %d", resp.StatusCode)
+	}
+
+	logoutReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/auth/logout", nil)
+	logoutReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	resp, err = client.Do(logoutReq)
+	if err != nil {
+		t.Fatalf("auth logout: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /auth/logout, got %d", resp.StatusCode)
+	}
+
+	// Verify LOGIN log entry exists in admin logs
+	loginLogReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/logs?action=LOGIN", nil)
+	loginLogReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp, err = client.Do(loginLogReq)
+	if err != nil {
+		t.Fatalf("get login logs: %v", err)
+	}
+	defer resp.Body.Close()
+	var loginLogResp struct {
+		Logs []model.AccessLogEntry `json:"logs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&loginLogResp); err != nil {
+		t.Fatalf("decode login logs: %v", err)
+	}
+	if len(loginLogResp.Logs) == 0 {
+		t.Fatalf("expected LOGIN log entry in admin logs, found none")
+	}
+	if loginLogResp.Logs[0].Action != model.ActionLogin {
+		t.Fatalf("expected Action=LOGIN, got %s", loginLogResp.Logs[0].Action)
+	}
+
+	// Verify LOGOUT log entry exists in admin logs
+	logoutLogReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/logs?action=LOGOUT", nil)
+	logoutLogReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp, err = client.Do(logoutLogReq)
+	if err != nil {
+		t.Fatalf("get logout logs: %v", err)
+	}
+	defer resp.Body.Close()
+	var logoutLogResp struct {
+		Logs []model.AccessLogEntry `json:"logs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&logoutLogResp); err != nil {
+		t.Fatalf("decode logout logs: %v", err)
+	}
+	if len(logoutLogResp.Logs) == 0 {
+		t.Fatalf("expected LOGOUT log entry in admin logs, found none")
+	}
+	if logoutLogResp.Logs[0].Action != model.ActionLogout {
+		t.Fatalf("expected Action=LOGOUT, got %s", logoutLogResp.Logs[0].Action)
+	}
+}
+
+func TestSwaggerAndOpenAPISpecEndpoints(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	// 1. /api/v1/openapi.json returns valid JSON
+	resp, err := client.Get(ts.URL + "/api/v1/openapi.json")
+	if err != nil {
+		t.Fatalf("GET /api/v1/openapi.json: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /api/v1/openapi.json, got %d", resp.StatusCode)
+	}
+	var spec map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&spec); err != nil {
+		t.Fatalf("decode openapi.json: %v", err)
+	}
+	if spec["openapi"] != "3.0.3" {
+		t.Fatalf("expected openapi version 3.0.3, got %v", spec["openapi"])
+	}
+
+	// 2. /api/v1/swagger.json returns valid JSON
+	resp, err = client.Get(ts.URL + "/api/v1/swagger.json")
+	if err != nil {
+		t.Fatalf("GET /api/v1/swagger.json: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /api/v1/swagger.json, got %d", resp.StatusCode)
+	}
+
+	// 3. /swagger/ returns the Swagger UI HTML
+	resp, err = client.Get(ts.URL + "/swagger/")
+	if err != nil {
+		t.Fatalf("GET /swagger/: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /swagger/, got %d", resp.StatusCode)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(bodyBytes), "s3web REST API") {
+		t.Fatalf("expected swagger HTML content, got %s", string(bodyBytes[:200]))
+	}
+
+	// 4. /swagger redirects to /swagger/
+	noFollowClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err = noFollowClient.Get(ts.URL + "/swagger")
+	if err != nil {
+		t.Fatalf("GET /swagger redirect: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMovedPermanently {
+		t.Fatalf("expected 301 Moved Permanently from /swagger, got %d", resp.StatusCode)
+	}
+}
+

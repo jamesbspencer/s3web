@@ -52,6 +52,7 @@ type ObjectMeta struct {
 	S3ETag          string          `json:"s3_etag,omitempty"`
 	S3VersionID     string          `json:"s3_version_id,omitempty"`
 	UploadedBy      string          `json:"uploaded_by"`
+	UploadedAt      time.Time       `json:"uploaded_at"`
 	UpdatedAt       time.Time       `json:"updated_at"`
 	LastAccessedAt  time.Time       `json:"last_accessed_at"`
 	DownloadCount   int64           `json:"download_count"`
@@ -121,6 +122,7 @@ type DirectoryEntry struct {
 	SHA256          string          `json:"sha256,omitempty"`
 	SHA1            string          `json:"sha1,omitempty"`
 	HashStatus      HashStatus      `json:"hash_status,omitempty"`
+	UploadedAt      time.Time       `json:"uploaded_at,omitempty"`
 	UpdatedAt       time.Time       `json:"updated_at,omitempty"`
 	LastAccessedAt  time.Time       `json:"last_accessed_at,omitempty"`
 	DownloadCount   int64           `json:"download_count,omitempty"`
@@ -134,6 +136,7 @@ const (
 	PrincipalSSOUser        PrincipalType = "SSO_USER"
 	PrincipalGitHubWorkflow PrincipalType = "GITHUB_WORKFLOW"
 	PrincipalServiceAccount PrincipalType = "SERVICE_ACCOUNT"
+	PrincipalAnonymous      PrincipalType = "ANONYMOUS"
 )
 
 // AccessAction identifies the action logged against an object.
@@ -145,6 +148,8 @@ const (
 	ActionDelete   AccessAction = "DELETE"
 	ActionRestore  AccessAction = "RESTORE"
 	ActionHead     AccessAction = "HEAD"
+	ActionLogin    AccessAction = "LOGIN"
+	ActionLogout   AccessAction = "LOGOUT"
 )
 
 // AccessLogEntry represents a single per-item access log event.
@@ -207,6 +212,7 @@ type LocalUser struct {
 	Username          string     `json:"username"`
 	Email             string     `json:"email"`
 	DisplayName       string     `json:"display_name"`
+	SlackLink         string     `json:"slack_link,omitempty"`
 	PasswordHash      string     `json:"password_hash,omitempty"` // PBKDF2 hash stored at rest, stripped in API responses
 	IsAdmin           bool       `json:"is_admin"`
 	Disabled          bool       `json:"disabled"`
@@ -243,6 +249,7 @@ type Principal struct {
 	Username      string               `json:"username,omitempty"`
 	DisplayName   string               `json:"display_name"`
 	Email         string               `json:"email,omitempty"`
+	SlackLink     string               `json:"slack_link,omitempty"`
 	IsLocalAdmin  bool                 `json:"is_local_admin,omitempty"`
 	OIDCGroups    []string             `json:"oidc_groups,omitempty"`
 	AppGroups     []string             `json:"app_groups,omitempty"`
@@ -294,6 +301,9 @@ type AppSettings struct {
 	DefaultTreeState         string              `json:"default_tree_state"` // "expanded" or "collapsed"
 	EnableHTMLAutoindex      bool                `json:"enable_html_autoindex"`
 	EnableChecksumSidecars   bool                `json:"enable_checksum_sidecars"`
+	AnonymousAccessEnabled   bool                `json:"anonymous_access_enabled"`
+	SlackNotificationsEnabled bool                `json:"slack_notifications_enabled"`
+	SlackWebhookURL           string              `json:"slack_webhook_url"`
 	AllowedFileExtensions    []string            `json:"allowed_file_extensions"`
 	DefaultRestoreDays       int                 `json:"default_restore_days"`
 	DefaultRestoreTier       string              `json:"default_restore_tier"` // "Standard", "Expedited", "Bulk"

@@ -109,7 +109,7 @@ Even with valid IAM credentials, access to the S3 bucket is blocked unless reque
 
 ### 1. Zero-Cost Gateway VPC Endpoint
 - S3 requests from ECS tasks route through an **AWS Gateway VPC Endpoint** (`com.amazonaws.<region>.s3`) associated with the private route tables.
-- Eliminates NAT Gateway data-processing fees ($0.045/GB) for multi-gigabyte ISO and archive transfers.
+- Eliminates NAT Gateway data-processing fees ($0.045/GB) for multi-gigabyte ISO, virtual disk image, and archive transfers.
 
 ### 2. S3 Bucket Policy Lockdown
 The bucket policy enforces:

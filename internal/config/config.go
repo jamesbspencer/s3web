@@ -24,8 +24,9 @@ type Config struct {
 	LocalDataDir  string
 
 	// Session & Security
-	SessionSecret string
-	CookieSecure  bool
+	SessionSecret          string
+	CookieSecure           bool
+	AnonymousAccessEnabled bool
 
 	// Human OIDC SSO Configuration
 	OIDCEnabled      bool
@@ -36,24 +37,28 @@ type Config struct {
 	OIDCGroupsClaim  string
 
 	// GitHub Actions OIDC JWT Configuration
-	GitHubOIDCEnabled   bool
-	GitHubOIDCIssuerURL string
-	GitHubOIDCAudience  string
+	GitHubOIDCEnabled    bool
+	GitHubOIDCIssuerURL  string
+	GitHubOIDCAudience   string
 	GitHubPinnedJWKSJSON string // Optional pinned JWKS JSON for air-gapped private VPCs
 
 	// Bootstrap Admin, Demo Local User & Default HTML Raw Access Service Account (seeded on first boot)
-	BootstrapAdminUsername   string
-	BootstrapAdminEmail      string
-	BootstrapAdminPassword   string
-	BootstrapAdminOIDCGroup  string
-	BootstrapDemoUsername    string
-	BootstrapDemoEmail       string
-	BootstrapDemoPassword    string
-	BootstrapRawAccountID    string
-	BootstrapRawAccountKey   string
+	BootstrapAdminUsername  string
+	BootstrapAdminEmail     string
+	BootstrapAdminPassword  string
+	BootstrapAdminOIDCGroup string
+	BootstrapDemoUsername   string
+	BootstrapDemoEmail      string
+	BootstrapDemoPassword   string
+	BootstrapRawAccountID   string
+	BootstrapRawAccountKey  string
 
 	// File Extensions Whitelist
 	AllowedExtensions []string
+
+	// Slack Notifications
+	SlackNotificationsEnabled bool
+	SlackWebhookURL           string
 
 	// Log Retention
 	AccessLogRetentionDays int
@@ -63,40 +68,50 @@ type Config struct {
 // Load reads configuration from environment variables with sensible defaults.
 func Load() *Config {
 	baseURL := getEnv("S3WEB_BASE_URL", "http://localhost:8080")
+	// S3WEB_ANONYMOUS_ACCESS is the documented setting. Keep the earlier
+	// S3WEB_ANONYMOUS_ACCESS_ENABLED spelling as a fallback for deployments
+	// that adopted it before the contract was corrected.
+	anonymousAccessEnabled := getEnvBool(
+		"S3WEB_ANONYMOUS_ACCESS",
+		getEnvBool("S3WEB_ANONYMOUS_ACCESS_ENABLED", false),
+	)
 	return &Config{
-		ListenAddr:               getEnv("S3WEB_LISTEN_ADDR", ":8080"),
-		BaseURL:                  strings.TrimRight(baseURL, "/"),
-		BackendMode:              strings.ToLower(getEnv("S3WEB_BACKEND_MODE", "local")), // "aws" or "local"
-		AWSRegion:                getEnv("AWS_REGION", "us-east-1"),
-		S3Bucket:                 getEnv("S3WEB_S3_BUCKET", "corp-iso-artifacts"),
+		ListenAddr:                getEnv("S3WEB_LISTEN_ADDR", ":8080"),
+		BaseURL:                   strings.TrimRight(baseURL, "/"),
+		BackendMode:               strings.ToLower(getEnv("S3WEB_BACKEND_MODE", "local")), // "aws" or "local"
+		AWSRegion:                 getEnv("AWS_REGION", "us-east-1"),
+		S3Bucket:                  getEnv("S3WEB_S3_BUCKET", "corp-iso-artifacts"),
 		S3Endpoint:               getEnv("S3WEB_S3_ENDPOINT", ""),
-		DynamoDBTable:            getEnv("S3WEB_DYNAMODB_TABLE", "s3web-metadata"),
-		SQSQueueURL:              getEnv("S3WEB_SQS_QUEUE_URL", ""),
-		LocalDataDir:             getEnv("S3WEB_LOCAL_DATA_DIR", "/tmp/s3web-data"),
-		SessionSecret:            getEnv("S3WEB_SESSION_SECRET", randomFallbackSecret(32, "")),
-		CookieSecure:             getEnvBool("S3WEB_COOKIE_SECURE", false),
-		OIDCEnabled:              getEnvBool("S3WEB_OIDC_ENABLED", false),
-		OIDCIssuerURL:            getEnv("S3WEB_OIDC_ISSUER_URL", ""),
-		OIDCClientID:             getEnv("S3WEB_OIDC_CLIENT_ID", ""),
-		OIDCClientSecret:         getEnv("S3WEB_OIDC_CLIENT_SECRET", ""),
-		OIDCRedirectURL:          getEnv("S3WEB_OIDC_REDIRECT_URL", baseURL+"/auth/callback"),
-		OIDCGroupsClaim:          getEnv("S3WEB_OIDC_GROUPS_CLAIM", "groups"),
-		GitHubOIDCEnabled:        getEnvBool("S3WEB_GITHUB_OIDC_ENABLED", true),
-		GitHubOIDCIssuerURL:      getEnv("S3WEB_GITHUB_OIDC_ISSUER", "https://token.actions.githubusercontent.com"),
-		GitHubOIDCAudience:       getEnv("S3WEB_GITHUB_OIDC_AUDIENCE", baseURL),
-		GitHubPinnedJWKSJSON:     getEnv("S3WEB_GITHUB_PINNED_JWKS_JSON", ""),
-		BootstrapAdminUsername:   getEnv("S3WEB_BOOTSTRAP_ADMIN_USERNAME", "admin"),
-		BootstrapAdminEmail:      getEnv("S3WEB_BOOTSTRAP_ADMIN_EMAIL", "admin@example.com"),
-		BootstrapAdminPassword:   getEnv("S3WEB_BOOTSTRAP_ADMIN_PASSWORD", ""),
-		BootstrapAdminOIDCGroup:  getEnv("S3WEB_BOOTSTRAP_ADMIN_GROUP", "platform-admins"),
-		BootstrapDemoUsername:    getEnv("S3WEB_BOOTSTRAP_DEMO_USERNAME", "demo"),
-		BootstrapDemoEmail:       getEnv("S3WEB_BOOTSTRAP_DEMO_EMAIL", "demo@example.com"),
-		BootstrapDemoPassword:    getEnv("S3WEB_BOOTSTRAP_DEMO_PASSWORD", ""),
-		BootstrapRawAccountID:    getEnv("S3WEB_BOOTSTRAP_RAW_ID", "svc-raw-access"),
-		BootstrapRawAccountKey:   getEnv("S3WEB_BOOTSTRAP_RAW_SECRET", randomFallbackSecret(24, "s3w_")),
-		AllowedExtensions:        ParseExtensionList(getEnv("S3WEB_ALLOWED_EXTENSIONS", ".iso,.img,.tar.gz,.tgz,.zip,.qcow2,.raw")),
-		AccessLogRetentionDays:   getEnvInt("S3WEB_LOG_RETENTION_DAYS", 90),
-		WorkerPollInterval:       time.Duration(getEnvInt("S3WEB_WORKER_POLL_SECONDS", 15)) * time.Second,
+		DynamoDBTable:             getEnv("S3WEB_DYNAMODB_TABLE", "s3web-metadata"),
+		SQSQueueURL:               getEnv("S3WEB_SQS_QUEUE_URL", ""),
+		LocalDataDir:              getEnv("S3WEB_LOCAL_DATA_DIR", "/tmp/s3web-data"),
+		SessionSecret:             getEnv("S3WEB_SESSION_SECRET", randomFallbackSecret(32, "")),
+		CookieSecure:              getEnvBool("S3WEB_COOKIE_SECURE", false),
+		AnonymousAccessEnabled:    anonymousAccessEnabled,
+		OIDCEnabled:               getEnvBool("S3WEB_OIDC_ENABLED", false),
+		OIDCIssuerURL:             getEnv("S3WEB_OIDC_ISSUER_URL", ""),
+		OIDCClientID:              getEnv("S3WEB_OIDC_CLIENT_ID", ""),
+		OIDCClientSecret:          getEnv("S3WEB_OIDC_CLIENT_SECRET", ""),
+		OIDCRedirectURL:           getEnv("S3WEB_OIDC_REDIRECT_URL", baseURL+"/auth/callback"),
+		OIDCGroupsClaim:           getEnv("S3WEB_OIDC_GROUPS_CLAIM", "groups"),
+		GitHubOIDCEnabled:         getEnvBool("S3WEB_GITHUB_OIDC_ENABLED", true),
+		GitHubOIDCIssuerURL:       getEnv("S3WEB_GITHUB_OIDC_ISSUER", "https://token.actions.githubusercontent.com"),
+		GitHubOIDCAudience:        getEnv("S3WEB_GITHUB_OIDC_AUDIENCE", baseURL),
+		GitHubPinnedJWKSJSON:      getEnv("S3WEB_GITHUB_PINNED_JWKS_JSON", ""),
+		BootstrapAdminUsername:    getEnv("S3WEB_BOOTSTRAP_ADMIN_USERNAME", "admin"),
+		BootstrapAdminEmail:       getEnv("S3WEB_BOOTSTRAP_ADMIN_EMAIL", "admin@example.com"),
+		BootstrapAdminPassword:    getEnv("S3WEB_BOOTSTRAP_ADMIN_PASSWORD", ""),
+		BootstrapAdminOIDCGroup:   getEnv("S3WEB_BOOTSTRAP_ADMIN_GROUP", "platform-admins"),
+		BootstrapDemoUsername:     getEnv("S3WEB_BOOTSTRAP_DEMO_USERNAME", "demo"),
+		BootstrapDemoEmail:        getEnv("S3WEB_BOOTSTRAP_DEMO_EMAIL", "demo@example.com"),
+		BootstrapDemoPassword:     getEnv("S3WEB_BOOTSTRAP_DEMO_PASSWORD", ""),
+		BootstrapRawAccountID:     getEnv("S3WEB_BOOTSTRAP_RAW_ID", "svc-raw-access"),
+		BootstrapRawAccountKey:    getEnv("S3WEB_BOOTSTRAP_RAW_SECRET", randomFallbackSecret(24, "s3w_")),
+		AllowedExtensions:         ParseExtensionList(getEnv("S3WEB_ALLOWED_EXTENSIONS", ".iso,.img,.tar.gz,.tgz,.zip,.qcow2,.raw")),
+		SlackNotificationsEnabled: getEnvBool("S3WEB_SLACK_NOTIFICATIONS_ENABLED", false),
+		SlackWebhookURL:           getEnv("S3WEB_SLACK_WEBHOOK_URL", ""),
+		AccessLogRetentionDays:    getEnvInt("S3WEB_LOG_RETENTION_DAYS", 90),
+		WorkerPollInterval:        time.Duration(getEnvInt("S3WEB_WORKER_POLL_SECONDS", 15)) * time.Second,
 	}
 }
 
@@ -169,4 +184,3 @@ func getEnvInt(key string, fallback int) int {
 	}
 	return fallback
 }
-

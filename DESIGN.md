@@ -1,14 +1,17 @@
-# System Design Document: `s3web` — S3 Artifact Browser & HTML Raw Access
+# System Design Document: `s3web` — Large File Archive Frontend for AWS S3 Intelligent-Tiering
 
 ## 1. Overview & Objectives
 
-`s3web` is an internal web interface and HTTP artifact proxy for Amazon S3 buckets storing large ISO images and compressed archives (`.iso`, `.tar.gz`, `.tar.zst`, `.qcow2`, `.zip`). It combines the architectural strengths of three reference projects while solving the enterprise requirements they leave unaddressed:
+`s3web` is an internal web interface, large file archive frontend, and HTTP data-plane proxy for Amazon S3 buckets with AWS S3 Intelligent-Tiering. Designed for multi-gigabyte files (ISO images, virtual machine disk images, database backups, tarballs, and compressed archives: `.iso`, `.img`, `.raw`, `.tar.gz`, `.tgz`, `.zip`, `.qcow2`, `.vmdk`, and datasets), it combines the architectural strengths of three reference projects while solving the enterprise requirements they leave unaddressed:
 1. [`wenisch-tech/s3webui`](https://github.com/wenisch-tech/s3webui) — Modern Tailwind + Lucide UI, OIDC/local auth, and application-level audit history.
 2. [`aws-samples/sample-amplify-storage-browser`](https://github.com/aws-samples/sample-amplify-storage-browser) — Clean prefix/location drill-down, RBAC permissions (`READ` vs. `READWRITE`), and resilient client-side multipart uploads.
 3. [`aws-samples/public-file-browser-for-amazon-s3`](https://aws.amazon.com/blogs/storage/creating-a-simple-public-file-repository-on-amazon-s3/) — Apache/Nginx `autoindex`-style browsable directory repository index and S3 event-driven synchronization so files dropped directly into the S3 bucket immediately appear in the repository index.
 
 ### Core Requirements
-1. **Private-Only Single-VPC, Multi-AZ Footprint (VPN Access Only)**: Hosted in an isolated AWS VPC containing **only private subnets** (no Internet Gateway, no public subnets, and no public IP addresses), accessed exclusively via a corporate **VPN (Virtual Private Gateway / AWS Transit Gateway / Client VPN)**. All AWS service dependencies (`S3`, `DynamoDB`, `ECR`, `CloudWatch Logs`, `Secrets Manager`, `SQS`, `KMS`) are reached via **VPC Gateway and Interface Endpoints (AWS PrivateLink)**.
+1. **Private VPC Capable & Zero External CDN Dependencies (VPN Access Only)**:
+   - Hosted in an isolated AWS VPC containing **only private subnets** (no Internet Gateway, no public subnets, and no public IP addresses), accessed exclusively via a corporate **VPN (Virtual Private Gateway / AWS Transit Gateway / Client VPN)**.
+   - Built with **zero external CDN dependencies** (`//go:embed` self-contained UI with inline SVG assets; no runtime internet access or external fonts/scripts required).
+   - All AWS service dependencies (`S3`, `DynamoDB`, `ECR`, `CloudWatch Logs`, `Secrets Manager`, `SQS`, `KMS`) are reached via **VPC Gateway and Interface Endpoints (AWS PrivateLink)**.
 2. **Authentication & In-App RBAC (Zero Anonymous Access)**:
    - **Anonymous Access Disabled**: Every request to `/api/v1/*` and `/raw/*` requires authentication (Session Cookie, HTTP Basic Auth, or Bearer Token/JWT).
    - **Local User Accounts (`LOCAL_USER`)**: Built-in local accounts stored with PBKDF2-SHA256 salted password hashes. On initial install, `s3web` automatically creates a default `admin` account with a cryptographically random generated password and a `demo` local user account. Local users can update their own passwords, and administrators can reset passwords or disable individual or all local accounts.

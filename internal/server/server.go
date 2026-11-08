@@ -56,8 +56,11 @@ func New(cfg *config.Config, st store.MetadataStore, objStore storage.ObjectStor
 			RepositoryTitle:          "s3web — S3 Artifact Repository",
 			DefaultTreeState:         "expanded",
 			EnableHTMLAutoindex:      true,
-			EnableChecksumSidecars:   true,
-			AllowedFileExtensions:    cfg.AllowedExtensions,
+			EnableChecksumSidecars:    true,
+			AnonymousAccessEnabled:    cfg.AnonymousAccessEnabled,
+			SlackNotificationsEnabled: cfg.SlackNotificationsEnabled,
+			SlackWebhookURL:           cfg.SlackWebhookURL,
+			AllowedFileExtensions:     cfg.AllowedExtensions,
 			DefaultRestoreDays:       7,
 			DefaultRestoreTier:       "Standard",
 			AccessLogRetentionDays:   cfg.AccessLogRetentionDays,
@@ -132,6 +135,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/auth/login", s.handleAuthLogin)
 	s.mux.HandleFunc("/auth/logout", s.handleAuthLogout)
 	s.mux.HandleFunc("/api/v1/auth/password", s.withAuth(s.handleChangeOwnPassword))
+	s.mux.HandleFunc("/api/v1/auth/profile", s.withAuth(s.handleUpdateProfile))
 	s.mux.HandleFunc("/api/v1/auth/session", s.withAuth(s.handleSwitchSession))
 	s.mux.HandleFunc("/api/v1/auth/github-test-jwt", s.withAuth(s.handleMintTestGitHubJWT))
 
@@ -154,7 +158,16 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/admin/groups/", s.withAuth(s.handleAdminGroupsByName))
 	s.mux.HandleFunc("/api/v1/admin/service-accounts", s.withAuth(s.handleAdminServiceAccounts))
 	s.mux.HandleFunc("/api/v1/admin/service-accounts/", s.withAuth(s.handleAdminServiceAccountsByID))
+	s.mux.HandleFunc("/api/v1/admin/logs", s.withAuth(s.handleAdminAllLogs))
+	s.mux.HandleFunc("/api/v1/admin/slack/test", s.withAuth(s.handleAdminSlackTest))
 	s.mux.HandleFunc("/api/v1/settings", s.withAuth(s.handleSettings))
+
+	// Swagger & OpenAPI Specification Endpoints (Zero External CDN Dependencies)
+	s.mux.HandleFunc("/api/v1/openapi.json", s.handleOpenAPISpec)
+	s.mux.HandleFunc("/api/v1/swagger.json", s.handleOpenAPISpec)
+	s.mux.HandleFunc("/swagger", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/swagger/", http.StatusMovedPermanently)
+	})
 
 	// Embedded Self-Contained Web UI Assets (Zero external CDN calls)
 	s.mux.Handle("/", http.FileServer(s.uiAssets))
@@ -191,6 +204,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST required for login")
 		return
@@ -208,6 +222,11 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := s.authn.AuthenticateLocalUser(r.Context(), req.Username, req.Password)
 	if err != nil {
+		s.recordAccessLog(r, &model.Principal{
+			Type:     model.PrincipalLocalUser,
+			ID:       req.Username,
+			Username: req.Username,
+		}, "auth/login", model.ActionLogin, 0, http.StatusUnauthorized, false, time.Since(start))
 		writeJSONError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
@@ -215,6 +234,15 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	p := &model.Principal{
+		Type:        model.PrincipalLocalUser,
+		ID:          user.Username,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		Email:       user.Email,
+	}
+	s.recordAccessLog(r, p, "auth/login", model.ActionLogin, 0, http.StatusOK, false, time.Since(start))
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":       "authenticated",
 		"username":     user.Username,
@@ -225,6 +253,11 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	p, _ := s.authn.AuthenticateRequest(r)
+	if p != nil && p.Type != model.PrincipalAnonymous {
+		s.recordAccessLog(r, p, "auth/logout", model.ActionLogout, 0, http.StatusOK, false, time.Since(start))
+	}
 	s.authn.ClearSessionCookie(w)
 	if strings.Contains(r.Header.Get("Accept"), "application/json") || r.Method == http.MethodPost {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
@@ -626,6 +659,7 @@ func (s *Server) handleObjectUpload(w http.ResponseWriter, r *http.Request, key 
 		HashStatus:      model.HashReady,
 		S3ETag:          putRes.ETag,
 		UploadedBy:      p.ID,
+		UploadedAt:      now,
 		UpdatedAt:       now,
 		LastAccessedAt:  now,
 	}
@@ -717,6 +751,15 @@ func (s *Server) handleObjectRestore(w http.ResponseWriter, r *http.Request, key
 		writeJSONError(w, http.StatusForbidden, "permission denied")
 		return
 	}
+
+	var restoreReq struct {
+		NotifySlack bool   `json:"notify_slack"`
+		SlackLink   string `json:"slack_link"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&restoreReq)
+	}
+
 	s.settingsMu.RLock()
 	restoreDays := s.settings.DefaultRestoreDays
 	s.settingsMu.RUnlock()
@@ -734,6 +777,15 @@ func (s *Server) handleObjectRestore(w http.ResponseWriter, r *http.Request, key
 	}
 	s.recordAccessLog(r, p, key, model.ActionRestore, 0, http.StatusAccepted, false, time.Since(start))
 	meta, _ := s.store.GetObjectMeta(r.Context(), key)
+
+	if restoreReq.NotifySlack {
+		targetSlack := restoreReq.SlackLink
+		if targetSlack == "" && p != nil {
+			targetSlack = p.SlackLink
+		}
+		go s.notifySlackRestore(context.Background(), key, meta, p, targetSlack)
+	}
+
 	writeJSON(w, http.StatusAccepted, meta)
 }
 
@@ -991,15 +1043,25 @@ func (s *Server) recordAccessLog(
 	duration time.Duration,
 ) {
 	var groups []string
-	groups = append(groups, p.OIDCGroups...)
-	groups = append(groups, p.AppGroups...)
+	pType := model.PrincipalAnonymous
+	pID := "anonymous"
+
+	if p != nil {
+		groups = append(groups, p.OIDCGroups...)
+		groups = append(groups, p.AppGroups...)
+		pType = p.Type
+		pID = p.ID
+		if pID == "" {
+			pID = p.Username
+		}
+	}
 
 	entry := &model.AccessLogEntry{
 		ObjectKey:     key,
 		Timestamp:     time.Now().UTC(),
 		Action:        action,
-		PrincipalType: p.Type,
-		PrincipalID:   p.ID,
+		PrincipalType: pType,
+		PrincipalID:   pID,
 		Groups:        groups,
 		ClientIP:      extractClientIP(r),
 		UserAgent:     r.UserAgent(),
@@ -1486,9 +1548,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"repository_title":         s.settings.RepositoryTitle,
 				"default_tree_state":       s.settings.DefaultTreeState,
-				"enable_html_autoindex":    s.settings.EnableHTMLAutoindex,
-				"enable_checksum_sidecars": s.settings.EnableChecksumSidecars,
-				"allowed_file_extensions":  s.settings.AllowedFileExtensions,
+				"enable_html_autoindex":       s.settings.EnableHTMLAutoindex,
+				"enable_checksum_sidecars":    s.settings.EnableChecksumSidecars,
+				"anonymous_access_enabled":    s.settings.AnonymousAccessEnabled,
+				"slack_notifications_enabled": s.settings.SlackNotificationsEnabled,
+				"allowed_file_extensions":     s.settings.AllowedFileExtensions,
 				"default_restore_days":     s.settings.DefaultRestoreDays,
 				"default_restore_tier":     s.settings.DefaultRestoreTier,
 				"buckets":                  s.settings.Buckets,
@@ -1507,7 +1571,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			DefaultTreeState        string `json:"default_tree_state"`
 			EnableHTMLAutoindex     bool   `json:"enable_html_autoindex"`
 			EnableChecksumSidecars  bool   `json:"enable_checksum_sidecars"`
-			AllowedFileExtensions   *[]string `json:"allowed_file_extensions"`
+			AnonymousAccessEnabled    *bool     `json:"anonymous_access_enabled"`
+			SlackNotificationsEnabled *bool     `json:"slack_notifications_enabled"`
+			SlackWebhookURL           *string   `json:"slack_webhook_url"`
+			AllowedFileExtensions     *[]string `json:"allowed_file_extensions"`
 			DefaultRestoreDays      int    `json:"default_restore_days"`
 			DefaultRestoreTier      string `json:"default_restore_tier"`
 			AccessLogRetentionDays  int    `json:"access_log_retention_days"`
@@ -1669,6 +1736,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		s.settings.EnableHTMLAutoindex = req.EnableHTMLAutoindex
 		s.settings.EnableChecksumSidecars = req.EnableChecksumSidecars
+		if req.AnonymousAccessEnabled != nil {
+			s.settings.AnonymousAccessEnabled = *req.AnonymousAccessEnabled
+			s.authn.SetAnonymousAccessEnabled(*req.AnonymousAccessEnabled)
+		}
+		if req.SlackNotificationsEnabled != nil {
+			s.settings.SlackNotificationsEnabled = *req.SlackNotificationsEnabled
+		}
+		if req.SlackWebhookURL != nil {
+			s.settings.SlackWebhookURL = strings.TrimSpace(*req.SlackWebhookURL)
+		}
 		if req.AllowedFileExtensions != nil {
 			s.settings.AllowedFileExtensions = config.CleanExtensionSlice(*req.AllowedFileExtensions)
 		}
@@ -1754,5 +1831,246 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut && r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	p := auth.PrincipalFromContext(r.Context())
+	if p == nil || p.Type == model.PrincipalAnonymous {
+		writeJSONError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var req struct {
+		DisplayName *string `json:"display_name"`
+		Email       *string `json:"email"`
+		SlackLink   *string `json:"slack_link"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	if p.Type == model.PrincipalLocalUser {
+		user, err := s.store.GetLocalUser(r.Context(), p.Username)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to get local user: "+err.Error())
+			return
+		}
+		if user == nil {
+			writeJSONError(w, http.StatusNotFound, "local user not found")
+			return
+		}
+		if req.DisplayName != nil {
+			user.DisplayName = strings.TrimSpace(*req.DisplayName)
+		}
+		if req.Email != nil {
+			user.Email = strings.TrimSpace(*req.Email)
+		}
+		if req.SlackLink != nil {
+			user.SlackLink = strings.TrimSpace(*req.SlackLink)
+		}
+		user.UpdatedAt = time.Now().UTC()
+		if err := s.store.UpsertLocalUser(r.Context(), user); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to save local user: "+err.Error())
+			return
+		}
+		if user.DisplayName != "" {
+			p.DisplayName = user.DisplayName
+		} else {
+			p.DisplayName = user.Username
+		}
+		p.Email = user.Email
+		p.SlackLink = user.SlackLink
+	} else {
+		if req.DisplayName != nil {
+			p.DisplayName = strings.TrimSpace(*req.DisplayName)
+			if p.DisplayName == "" {
+				p.DisplayName = p.Username
+			}
+		}
+		if req.Email != nil {
+			p.Email = strings.TrimSpace(*req.Email)
+		}
+		if req.SlackLink != nil {
+			p.SlackLink = strings.TrimSpace(*req.SlackLink)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":       "updated",
+		"display_name": p.DisplayName,
+		"email":        p.Email,
+		"slack_link":   p.SlackLink,
+	})
+}
+
+func (s *Server) handleAdminAllLogs(w http.ResponseWriter, r *http.Request) {
+	p := auth.PrincipalFromContext(r.Context())
+	if !p.EffectivePerm.IsAdmin {
+		writeJSONError(w, http.StatusForbidden, "admin permission required")
+		return
+	}
+	actionFilter := r.URL.Query().Get("action")
+	actorFilter := r.URL.Query().Get("actor")
+	keyFilter := r.URL.Query().Get("key")
+	limit := 200
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	logs, err := s.store.ListAllAccessLogs(r.Context(), actionFilter, actorFilter, keyFilter, limit)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"logs": logs,
+	})
+}
+
+func (s *Server) handleAdminSlackTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	p := auth.PrincipalFromContext(r.Context())
+	if !p.EffectivePerm.IsAdmin {
+		writeJSONError(w, http.StatusForbidden, "admin permission required")
+		return
+	}
+	var req struct {
+		WebhookURL string `json:"webhook_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	targetURL := strings.TrimSpace(req.WebhookURL)
+	if targetURL == "" {
+		s.settingsMu.RLock()
+		targetURL = s.settings.SlackWebhookURL
+		s.settingsMu.RUnlock()
+	}
+	if targetURL == "" {
+		writeJSONError(w, http.StatusBadRequest, "Slack webhook URL is required")
+		return
+	}
+	testMsg := fmt.Sprintf("🔔 *s3web Notification Test*: Slack integration is operating correctly! Test triggered by %s.", p.DisplayName)
+	if err := s.sendSlackWebhook(r.Context(), targetURL, testMsg); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Slack webhook delivery failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "Slack test message sent successfully!"})
+}
+
+func (s *Server) notifySlackRestore(ctx context.Context, key string, meta *model.ObjectMeta, p *model.Principal, slackLink string) {
+	s.settingsMu.RLock()
+	enabled := s.settings.SlackNotificationsEnabled
+	webhookURL := s.settings.SlackWebhookURL
+	baseURL := s.cfg.BaseURL
+	s.settingsMu.RUnlock()
+
+	if !enabled || webhookURL == "" {
+		return
+	}
+
+	userMention := ""
+	if slackLink != "" {
+		trimmed := strings.TrimSpace(slackLink)
+		if strings.HasPrefix(trimmed, "U") || strings.HasPrefix(trimmed, "W") {
+			userMention = fmt.Sprintf("<@%s>", trimmed)
+		} else if strings.HasPrefix(trimmed, "@") {
+			userMention = trimmed
+		} else if strings.HasPrefix(trimmed, "http") {
+			userMention = fmt.Sprintf("<%s|Slack Profile>", trimmed)
+		} else {
+			userMention = fmt.Sprintf("<@%s>", trimmed)
+		}
+	} else if p != nil {
+		userMention = p.DisplayName
+		if userMention == "" {
+			userMention = p.Username
+		}
+	}
+
+	sizeStr := ""
+	if meta != nil && meta.Size > 0 {
+		sizeStr = fmt.Sprintf(" (%s)", formatBytesGo(meta.Size))
+	}
+
+	rawURL := fmt.Sprintf("%s/raw/%s", strings.TrimRight(baseURL, "/"), key)
+	browserURL := fmt.Sprintf("%s/", strings.TrimRight(baseURL, "/"))
+
+	msg := fmt.Sprintf("📦 *S3 Artifact Restored*: `%s`%s is now restored to Frequent Access (FA) and ready for download!\n• *Requested By*: %s\n• *Download URL*: <%s|Direct /raw/ Link>\n• *Artifact Browser*: <%s|View in s3web>",
+		key, sizeStr, userMention, rawURL, browserURL)
+
+	_ = s.sendSlackWebhook(ctx, webhookURL, msg)
+}
+
+func (s *Server) sendSlackWebhook(ctx context.Context, webhookURL, text string) error {
+	if webhookURL == "" {
+		return errors.New("webhook url is empty")
+	}
+	payload := map[string]interface{}{
+		"text": text,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("webhook error %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
+func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
+	specFile, err := s.uiAssets.Open("swagger/openapi.json")
+	if err != nil {
+		specFile, err = s.uiAssets.Open("/swagger/openapi.json")
+	}
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, "OpenAPI specification not found: "+err.Error())
+		return
+	}
+	defer specFile.Close()
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, specFile)
+}
+
+func formatBytesGo(bytes int64) string {
+	if bytes <= 0 {
+		return "0 B"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	val := float64(bytes)
+	i := 0
+	for val >= 1024 && i < len(units)-1 {
+		val /= 1024
+		i++
+	}
+	if i == 0 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	return fmt.Sprintf("%.2f %s", val, units[i])
 }
 

@@ -1,0 +1,1310 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "s3web API",
+    "description": "High-Performance S3 Intelligent-Tiering Large File Archive Frontend and Private VPC Repository REST API. Zero external CDN dependencies, fully private VPC capable, and prefix-scoped decoupled RBAC.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "s3web Platform Team"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Active s3web Instance"
+    }
+  ],
+  "tags": [
+    {
+      "name": "System & Health",
+      "description": "System health and connectivity checks"
+    },
+    {
+      "name": "Authentication & Profile",
+      "description": "Session authentication, profile management, and password updates"
+    },
+    {
+      "name": "Artifact Browser",
+      "description": "Object hierarchy browsing, search, and directory tree listings"
+    },
+    {
+      "name": "Object Operations & Tiering",
+      "description": "Streaming upload, download, metadata inspection, S3 Intelligent-Tiering restoration"
+    },
+    {
+      "name": "HTML Raw Access",
+      "description": "Direct /raw/ autoindex, range downloads, and virtual sidecars (.sha256 / .sha1)"
+    },
+    {
+      "name": "Access Logs & Auditing",
+      "description": "Per-item and repository-wide access and audit logs"
+    },
+    {
+      "name": "Admin & Settings",
+      "description": "Global repository settings, Slack webhook configuration, and system parameters"
+    },
+    {
+      "name": "Access Grants & RBAC",
+      "description": "Prefix-scoped access grants and application-managed user groups"
+    },
+    {
+      "name": "User & Service Accounts",
+      "description": "Local user lifecycle management and automated service account tokens"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "System & Health"
+        ],
+        "summary": "Healthcheck endpoint",
+        "description": "Returns HTTP 200 OK for internal ALB target groups and container orchestration probes.",
+        "responses": {
+          "200": {
+            "description": "Server is healthy",
+            "content": {
+              "application/json": {
+                "example": {
+                  "status": "ok",
+                  "mode": "local",
+                  "bucket": "corp-iso-artifacts",
+                  "timestamp_utc": "2026-11-08T16:00:00Z"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Authentication & Profile"
+        ],
+        "summary": "Authenticate local user",
+        "description": "Authenticates a local user using username and PBKDF2-HMAC-SHA256 password hash, establishing a secure HTTP session cookie.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "example": "admin"
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "example": "secret-password"
+                  }
+                },
+                "required": [
+                  "username",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated successfully",
+            "content": {
+              "application/json": {
+                "example": {
+                  "status": "authenticated",
+                  "username": "admin",
+                  "display_name": "Default Administrator",
+                  "email": "admin@example.com",
+                  "is_admin": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Authentication & Profile"
+        ],
+        "summary": "Sign out",
+        "description": "Terminates the active session and clears the session cookie.",
+        "responses": {
+          "200": {
+            "description": "Logged out",
+            "content": {
+              "application/json": {
+                "example": {
+                  "status": "logged_out"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "tags": [
+          "Authentication & Profile"
+        ],
+        "summary": "Current authenticated user & permissions",
+        "description": "Returns the authenticated principal identity, effective permissions for a given prefix, and repository context.",
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": false,
+            "description": "S3 object key prefix to evaluate effective RBAC permissions for",
+            "schema": {
+              "type": "string",
+              "example": "isos/linux/"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User identity and effective permissions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "principal": {
+                      "$ref": "#/components/schemas/Principal"
+                    },
+                    "effective_permissions": {
+                      "$ref": "#/components/schemas/EffectivePermissions"
+                    },
+                    "prefix": {
+                      "type": "string"
+                    },
+                    "bucket": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/profile": {
+      "put": {
+        "tags": [
+          "Authentication & Profile"
+        ],
+        "summary": "Update user profile",
+        "description": "Allows authenticated users to update their personal display name, email address, and Slack notification handle / member ID.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "display_name": {
+                    "type": "string",
+                    "example": "Jane Doe"
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "example": "jdoe@example.com"
+                  },
+                  "slack_link": {
+                    "type": "string",
+                    "example": "U01234567"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profile updated successfully"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/password": {
+      "post": {
+        "tags": [
+          "Authentication & Profile"
+        ],
+        "summary": "Change own local account password",
+        "description": "Allows a local user to self-service change their password by supplying their current password and a new password.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "current_password": {
+                    "type": "string",
+                    "format": "password"
+                  },
+                  "new_password": {
+                    "type": "string",
+                    "format": "password",
+                    "minLength": 6
+                  }
+                },
+                "required": [
+                  "current_password",
+                  "new_password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password updated successfully"
+          },
+          "400": {
+            "description": "Invalid password or verification failure"
+          },
+          "401": {
+            "description": "Current password incorrect or unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/browse": {
+      "get": {
+        "tags": [
+          "Artifact Browser"
+        ],
+        "summary": "List folder contents and directory tree",
+        "description": "Returns artifacts and subfolders under the requested prefix, with support for filtering by S3 Intelligent-Tiering sub-tier.",
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "query",
+            "description": "S3 prefix/folder path",
+            "schema": {
+              "type": "string",
+              "example": "isos/"
+            }
+          },
+          {
+            "name": "tier",
+            "in": "query",
+            "description": "Filter by S3 Intelligent-Tiering sub-tier (FA, IA, AIA, AA, DAA)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Folder listing with items and subfolders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "prefix": {
+                      "type": "string"
+                    },
+                    "folders": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ObjectMetadata"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search": {
+      "get": {
+        "tags": [
+          "Artifact Browser"
+        ],
+        "summary": "Search artifacts",
+        "description": "Searches objects across all prefixes by filename substring or full-file SHA-256 / SHA-1 checksum hex digest.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "description": "Search query or checksum digest",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching artifacts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObjectMetadata"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/objects/{key}": {
+      "put": {
+        "tags": [
+          "Object Operations & Tiering"
+        ],
+        "summary": "Upload object (Streaming Dual-Hash)",
+        "description": "Streams upload body to S3 bucket with Intelligent-Tiering storage class while concurrently computing full-file linear SHA-256 and SHA-1 hashes.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "Full S3 object key",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Uploaded successfully and metadata cataloged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectMetadata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "File extension not allowed by policy"
+          },
+          "403": {
+            "description": "Upload permission denied for prefix"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Object Operations & Tiering"
+        ],
+        "summary": "Delete object",
+        "description": "Deletes the artifact from S3 and soft/hard deletes metadata based on retention policy.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "Full S3 object key",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object deleted successfully"
+          },
+          "403": {
+            "description": "Delete permission denied"
+          }
+        }
+      }
+    },
+    "/api/v1/objects/{key}/download": {
+      "get": {
+        "tags": [
+          "Object Operations & Tiering"
+        ],
+        "summary": "Download artifact",
+        "description": "Streams the object content directly from S3 through s3web (enforcing RBAC and logging per-item access). Supports HTTP Range requests.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object file stream",
+            "content": {
+              "application/octet-stream": {}
+            }
+          },
+          "206": {
+            "description": "Partial content for HTTP Range request"
+          },
+          "403": {
+            "description": "Object is in an asynchronous archive tier requiring RestoreObject, or read denied"
+          }
+        }
+      }
+    },
+    "/api/v1/objects/{key}/meta": {
+      "get": {
+        "tags": [
+          "Object Operations & Tiering"
+        ],
+        "summary": "Get object metadata & checksums",
+        "description": "Returns full object metadata, file size, content type, SHA-256, SHA-1, Intelligent-Tiering sub-tier, and download metrics.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Metadata details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectMetadata"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found"
+          }
+        }
+      }
+    },
+    "/api/v1/objects/{key}/restore": {
+      "post": {
+        "tags": [
+          "Object Operations & Tiering"
+        ],
+        "summary": "Initiate archive restoration (s3:RestoreObject)",
+        "description": "Triggers an asynchronous retrieval from S3 Intelligent-Tiering Archive Access (AA) or Deep Archive Access (DAA) back to Frequent Access (FA). Optionally dispatches a Slack webhook alert upon completion.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "notify_slack": {
+                    "type": "boolean",
+                    "example": true
+                  },
+                  "slack_link": {
+                    "type": "string",
+                    "example": "<@U01234567>"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Restore initiated (HTTP 202 Accepted)"
+          },
+          "403": {
+            "description": "Permission denied"
+          }
+        }
+      }
+    },
+    "/api/v1/objects/{key}/tier": {
+      "post": {
+        "tags": [
+          "Object Operations & Tiering"
+        ],
+        "summary": "Simulate or transition Intelligent-Tiering sub-tier",
+        "description": "Transitions an object between Intelligent-Tiering sub-tiers (FA, IA, AIA, AA, DAA) for testing or lifecycle management.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "intelligent_tier": {
+                    "type": "string",
+                    "enum": [
+                      "FA",
+                      "IA",
+                      "AIA",
+                      "AA",
+                      "DAA"
+                    ],
+                    "example": "AIA"
+                  },
+                  "restore_status": {
+                    "type": "string",
+                    "enum": [
+                      "NONE",
+                      "IN_PROGRESS",
+                      "RESTORED"
+                    ],
+                    "example": "NONE"
+                  }
+                },
+                "required": [
+                  "intelligent_tier"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tier updated successfully"
+          }
+        }
+      }
+    },
+    "/raw/{path}": {
+      "get": {
+        "tags": [
+          "HTML Raw Access"
+        ],
+        "summary": "Direct raw access & Apache/Nginx autoindex",
+        "description": "Provides curl/wget/automation-friendly direct file downloads and HTML directory listings. Requesting {path}.sha256 or {path}.sha1 returns the verified linear hash as a virtual sidecar file.",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "isos/linux/debian.iso"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw file stream, virtual checksum sidecar, or HTML directory listing"
+          },
+          "401": {
+            "description": "Authentication required (Basic Auth or Bearer token)"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/logs": {
+      "get": {
+        "tags": [
+          "Access Logs & Auditing"
+        ],
+        "summary": "Query repository-wide access and audit logs",
+        "description": "Administrator endpoint returning access and audit logs across all prefixes with action, actor, and object key filtering.",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Filter by action (LOGIN, LOGOUT, DOWNLOAD, UPLOAD, DELETE, RESTORE, TIER_CHANGE)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor",
+            "in": "query",
+            "description": "Filter by username or principal ID substring",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "description": "Filter by object key substring",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of entries to return (default: 100)",
+            "schema": {
+              "type": "integer",
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of access log entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "logs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AccessLogEntry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator permission required"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/slack/test": {
+      "post": {
+        "tags": [
+          "Admin & Settings"
+        ],
+        "summary": "Test Slack incoming webhook",
+        "description": "Sends a verification message to the specified or configured Slack incoming webhook URL.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "webhook_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "example": "https://hooks.slack.com/services/T00/B00/XXXX"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Test notification delivered successfully"
+          },
+          "400": {
+            "description": "Failed to dispatch webhook"
+          }
+        }
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "tags": [
+          "Admin & Settings"
+        ],
+        "summary": "Get repository settings",
+        "description": "Retrieves public or administrator repository settings (sensitive fields like DynamoDB tables and full webhook URLs are redacted for non-admins).",
+        "responses": {
+          "200": {
+            "description": "Repository settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Admin & Settings"
+        ],
+        "summary": "Update repository settings",
+        "description": "Updates global configuration including title, default tree state, anonymous access toggle, allowed file extensions, restore durations, and Slack webhook.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppSettings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings saved successfully"
+          },
+          "403": {
+            "description": "Administrator permission required"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/local-users": {
+      "get": {
+        "tags": [
+          "User & Service Accounts"
+        ],
+        "summary": "List local users",
+        "description": "Returns all local user accounts managed in s3web.",
+        "responses": {
+          "200": {
+            "description": "List of local users",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LocalUser"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "User & Service Accounts"
+        ],
+        "summary": "Create local user",
+        "description": "Provisions a new local user account with initial password.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 6
+                  },
+                  "is_admin": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "username",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Local user created"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/grants": {
+      "get": {
+        "tags": [
+          "Access Grants & RBAC"
+        ],
+        "summary": "List access grants",
+        "description": "Returns all prefix-scoped RBAC access grants.",
+        "responses": {
+          "200": {
+            "description": "List of access grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccessGrant"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Access Grants & RBAC"
+        ],
+        "summary": "Create or update access grant",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccessGrant"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Access grant persisted"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/service-accounts": {
+      "get": {
+        "tags": [
+          "User & Service Accounts"
+        ],
+        "summary": "List service accounts",
+        "responses": {
+          "200": {
+            "description": "List of service accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServiceAccount"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "User & Service Accounts"
+        ],
+        "summary": "Create service account & generate token",
+        "responses": {
+          "201": {
+            "description": "Service account created with token displayed once"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BasicAuth": {
+        "type": "http",
+        "scheme": "basic",
+        "description": "HTTP Basic Authentication for local accounts or service accounts"
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Service account Bearer token (<account-id>:s3w_<token>) or CI OIDC JWT"
+      },
+      "SessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "s3web_session",
+        "description": "Signed HMAC-SHA256 session cookie"
+      }
+    },
+    "schemas": {
+      "Principal": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "LOCAL_USER",
+              "SSO_USER",
+              "SERVICE_ACCOUNT",
+              "WORKLOAD_OIDC",
+              "ANONYMOUS"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "slack_link": {
+            "type": "string"
+          },
+          "is_local_admin": {
+            "type": "boolean"
+          },
+          "oidc_groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "app_groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "EffectivePermissions": {
+        "type": "object",
+        "properties": {
+          "can_read": {
+            "type": "boolean"
+          },
+          "can_upload": {
+            "type": "boolean"
+          },
+          "can_delete": {
+            "type": "boolean"
+          },
+          "is_admin": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ObjectMetadata": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "sha1": {
+            "type": "string"
+          },
+          "intelligent_tier": {
+            "type": "string",
+            "enum": [
+              "FA",
+              "IA",
+              "AIA",
+              "AA",
+              "DAA"
+            ]
+          },
+          "tier_label": {
+            "type": "string"
+          },
+          "restore_status": {
+            "type": "string",
+            "enum": [
+              "NONE",
+              "IN_PROGRESS",
+              "RESTORED"
+            ]
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "uploaded_by": {
+            "type": "string"
+          },
+          "download_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_accessed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccessLogEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "object_key": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "LOGIN",
+              "LOGOUT",
+              "DOWNLOAD",
+              "UPLOAD",
+              "DELETE",
+              "RESTORE",
+              "TIER_CHANGE",
+              "HEAD"
+            ]
+          },
+          "principal_type": {
+            "type": "string"
+          },
+          "principal_id": {
+            "type": "string"
+          },
+          "client_ip": {
+            "type": "string"
+          },
+          "user_agent": {
+            "type": "string"
+          },
+          "bytes_sent": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status_code": {
+            "type": "integer"
+          },
+          "range_request": {
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AppSettings": {
+        "type": "object",
+        "properties": {
+          "repository_title": {
+            "type": "string"
+          },
+          "default_tree_state": {
+            "type": "string",
+            "enum": [
+              "expanded",
+              "collapsed"
+            ]
+          },
+          "anonymous_access_enabled": {
+            "type": "boolean"
+          },
+          "enable_html_autoindex": {
+            "type": "boolean"
+          },
+          "enable_checksum_sidecars": {
+            "type": "boolean"
+          },
+          "allowed_file_extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default_restore_days": {
+            "type": "integer"
+          },
+          "default_restore_tier": {
+            "type": "string",
+            "enum": [
+              "Standard",
+              "Expedited",
+              "Bulk"
+            ]
+          },
+          "access_log_retention_days": {
+            "type": "integer"
+          },
+          "slack_notifications_enabled": {
+            "type": "boolean"
+          },
+          "slack_webhook_url": {
+            "type": "string"
+          }
+        }
+      },
+      "LocalUser": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "slack_link": {
+            "type": "string"
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccessGrant": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "grantee_type": {
+            "type": "string",
+            "enum": [
+              "USER",
+              "GROUP",
+              "ALL"
+            ]
+          },
+          "grantee_id": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "READ",
+                "UPLOAD",
+                "DELETE",
+                "ADMIN"
+              ]
+            }
+          },
+          "allowed_file_extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ServiceAccount": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_used_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}
