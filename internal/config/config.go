@@ -24,8 +24,9 @@ type Config struct {
 	LocalDataDir  string
 
 	// Session & Security
-	SessionSecret string
-	CookieSecure  bool
+	SessionSecret          string
+	CookieSecure           bool
+	AnonymousAccessEnabled bool
 
 	// Human OIDC SSO Configuration
 	OIDCEnabled      bool
@@ -55,6 +56,10 @@ type Config struct {
 	// File Extensions Whitelist
 	AllowedExtensions []string
 
+	// Slack Notifications
+	SlackNotificationsEnabled bool
+	SlackWebhookURL           string
+
 	// Log Retention
 	AccessLogRetentionDays int
 	WorkerPollInterval     time.Duration
@@ -75,6 +80,7 @@ func Load() *Config {
 		LocalDataDir:             getEnv("S3WEB_LOCAL_DATA_DIR", "/tmp/s3web-data"),
 		SessionSecret:            getEnv("S3WEB_SESSION_SECRET", randomFallbackSecret(32, "")),
 		CookieSecure:             getEnvBool("S3WEB_COOKIE_SECURE", false),
+		AnonymousAccessEnabled:   getEnvBool("S3WEB_ANONYMOUS_ACCESS_ENABLED", false),
 		OIDCEnabled:              getEnvBool("S3WEB_OIDC_ENABLED", false),
 		OIDCIssuerURL:            getEnv("S3WEB_OIDC_ISSUER_URL", ""),
 		OIDCClientID:             getEnv("S3WEB_OIDC_CLIENT_ID", ""),
@@ -95,6 +101,8 @@ func Load() *Config {
 		BootstrapRawAccountID:    getEnv("S3WEB_BOOTSTRAP_RAW_ID", "svc-raw-access"),
 		BootstrapRawAccountKey:   getEnv("S3WEB_BOOTSTRAP_RAW_SECRET", randomFallbackSecret(24, "s3w_")),
 		AllowedExtensions:        ParseExtensionList(getEnv("S3WEB_ALLOWED_EXTENSIONS", ".iso,.img,.tar.gz,.tgz,.zip,.qcow2,.raw")),
+		SlackNotificationsEnabled: getEnvBool("S3WEB_SLACK_NOTIFICATIONS_ENABLED", false),
+		SlackWebhookURL:           getEnv("S3WEB_SLACK_WEBHOOK_URL", ""),
 		AccessLogRetentionDays:   getEnvInt("S3WEB_LOG_RETENTION_DAYS", 90),
 		WorkerPollInterval:       time.Duration(getEnvInt("S3WEB_WORKER_POLL_SECONDS", 15)) * time.Second,
 	}

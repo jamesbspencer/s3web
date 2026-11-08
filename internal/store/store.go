@@ -32,9 +32,10 @@ type MetadataStore interface {
 	TouchObjectAccess(ctx context.Context, key string, accessedAt time.Time) error
 	UpdateObjectTier(ctx context.Context, key string, tier model.IntelligentTier, restoreStatus model.RestoreStatus) error
 
-	// Per-Item Access Logs
+	// Per-Item Access Logs & Global Audit Logs
 	AppendAccessLog(ctx context.Context, entry *model.AccessLogEntry) error
 	ListObjectAccessLogs(ctx context.Context, key string, actionFilter string, actorFilter string, limit int) ([]model.AccessLogEntry, error)
+	ListAllAccessLogs(ctx context.Context, actionFilter string, actorFilter string, keyFilter string, limit int) ([]model.AccessLogEntry, error)
 
 	// In-App Access Grants & App-Managed Groups
 	ListAccessGrants(ctx context.Context) ([]model.AccessGrant, error)
@@ -162,6 +163,15 @@ func enrichMeta(m *model.ObjectMeta) *model.ObjectMeta {
 	if cp.RestoreStatus == "" {
 		cp.RestoreStatus = model.RestoreNone
 	}
+	if cp.UploadedAt.IsZero() {
+		if !cp.UpdatedAt.IsZero() {
+			cp.UploadedAt = cp.UpdatedAt
+		} else if !cp.LastAccessedAt.IsZero() {
+			cp.UploadedAt = cp.LastAccessedAt
+		} else {
+			cp.UploadedAt = time.Now().UTC()
+		}
+	}
 	cp.IntelligentTier = cp.ComputeEffectiveTier(time.Now().UTC())
 	cp.TierLabel = model.TierDisplayLabel(cp.IntelligentTier)
 	return &cp
@@ -188,6 +198,9 @@ func (s *LocalStore) PutObjectMeta(_ context.Context, meta *model.ObjectMeta) er
 	}
 	if cp.UpdatedAt.IsZero() {
 		cp.UpdatedAt = time.Now().UTC()
+	}
+	if cp.UploadedAt.IsZero() {
+		cp.UploadedAt = cp.UpdatedAt
 	}
 	if cp.LastAccessedAt.IsZero() {
 		cp.LastAccessedAt = cp.UpdatedAt
@@ -265,6 +278,7 @@ func (s *LocalStore) ListDirectory(_ context.Context, prefix string, tierFilter 
 			SHA256:          meta.SHA256,
 			SHA1:            meta.SHA1,
 			HashStatus:      meta.HashStatus,
+			UploadedAt:      meta.UploadedAt,
 			UpdatedAt:       meta.UpdatedAt,
 			LastAccessedAt:  meta.LastAccessedAt,
 			DownloadCount:   meta.DownloadCount,
@@ -410,6 +424,45 @@ func (s *LocalStore) ListObjectAccessLogs(_ context.Context, key string, actionF
 		}
 	}
 	return out, nil
+}
+
+func (s *LocalStore) ListAllAccessLogs(_ context.Context, actionFilter string, actorFilter string, keyFilter string, limit int) ([]model.AccessLogEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	actionFilter = strings.ToUpper(strings.TrimSpace(actionFilter))
+	actorFilter = strings.ToLower(strings.TrimSpace(actorFilter))
+	keyFilter = strings.ToLower(strings.TrimSpace(keyFilter))
+	if limit <= 0 {
+		limit = 200
+	}
+
+	var all []model.AccessLogEntry
+	for _, entries := range s.state.Logs {
+		for _, entry := range entries {
+			if actionFilter != "" && actionFilter != "ALL" && string(entry.Action) != actionFilter {
+				continue
+			}
+			if actorFilter != "" && actorFilter != "all" &&
+				!strings.Contains(strings.ToLower(entry.PrincipalID), actorFilter) &&
+				!strings.EqualFold(string(entry.PrincipalType), actorFilter) {
+				continue
+			}
+			if keyFilter != "" && !strings.Contains(strings.ToLower(entry.ObjectKey), keyFilter) {
+				continue
+			}
+			all = append(all, entry)
+		}
+	}
+
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].Timestamp.After(all[j].Timestamp)
+	})
+
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
 }
 
 func (s *LocalStore) ListAccessGrants(_ context.Context) ([]model.AccessGrant, error) {

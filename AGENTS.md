@@ -6,7 +6,7 @@ This document defines core architectural principles, workflows, build/test comma
 
 ## 1. Project Overview
 
-`s3web` is a high-performance, single-binary Go application providing a private Web UI and an Apache/Nginx-style `/raw/` HTML directory index for Amazon S3 buckets storing large ISO images and compressed archives.
+`s3web` is a high-performance, single-binary Go large file archive frontend providing a private Web UI and an Apache/Nginx-style `/raw/` HTML directory index for Amazon S3 buckets with AWS S3 Intelligent-Tiering (large ISO images, virtual disk images, backups, tarballs, and compressed archives). It features zero external CDN dependencies and is fully private VPC capable.
 
 - **Primary Architecture Specification**: [`DESIGN.md`](DESIGN.md)
 - **S3 Authentication & Security Architecture**: [`docs/s3-authentication.md`](docs/s3-authentication.md)

@@ -31,8 +31,8 @@ func (e *Evaluator) Resolve(ctx context.Context, p *model.Principal, targetKey s
 	targetKey = strings.TrimLeft(strings.TrimSpace(targetKey), "/")
 	perm := model.EffectivePermissions{}
 
-	// Baseline default: all authenticated human users (SSO or Local) get Read-Only access by default
-	if p.Type == model.PrincipalSSOUser || p.Type == model.PrincipalLocalUser {
+	// Baseline default: all authenticated human users (SSO or Local) and anonymous guests get Read-Only access by default
+	if p.Type == model.PrincipalSSOUser || p.Type == model.PrincipalLocalUser || p.Type == model.PrincipalAnonymous {
 		perm.CanRead = true
 	}
 	if p.IsLocalAdmin {
@@ -85,7 +85,7 @@ func subjectMatches(p *model.Principal, g *model.AccessGrant) bool {
 		if strings.EqualFold(subID, "authenticated-users") && isHumanUser {
 			return true
 		}
-		if strings.EqualFold(subID, "all-principals") {
+		if strings.EqualFold(subID, "all-principals") || (p.Type == model.PrincipalAnonymous && strings.EqualFold(subID, "anonymous")) {
 			return true
 		}
 	case model.SubjectSSOUser, model.SubjectLocalUser:
