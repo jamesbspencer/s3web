@@ -799,6 +799,11 @@
               <option value="collapsed">Collapsed (Show top-level folders collapsed)</option>
             </select>
           </div>
+          <div class="form-group">
+            <label>Allowed File Extensions for Upload</label>
+            <input type="text" id="setAllowedExtensions" placeholder=".iso, .img, .tar.gz, .tgz, .zip, .qcow2, .raw (leave empty or * to allow all)" />
+            <div style="font-size:11.5px; color:var(--text-muted); margin-top:3px;">Whitelisted suffixes for uploaded files. Multi-part suffixes like <code>.tar.gz</code> are supported.</div>
+          </div>
           <div class="checkbox-row" style="margin-top:4px;">
             <label><input type="checkbox" id="setEnableAutoindex" checked /> Enable <code>/raw/</code> HTML Directory Index</label>
             <label><input type="checkbox" id="setEnableSidecars" checked /> Enable Virtual <code>.sha256</code> &amp; <code>.sha1</code> Sidecars</label>
@@ -1083,6 +1088,7 @@
       <div class="form-group">
         <label>Select File</label>
         <input type="file" id="uploadFileInput" onchange="onFileSelected(this)" />
+        <div id="uploadAllowedExtHint" style="font-size:11px; color:var(--text-muted); margin-top:3px; display:none;"></div>
       </div>
       <div style="display:flex; justify-content:flex-end; gap:8px;">
         <button class="btn" onclick="closeModals()">Cancel</button>
@@ -1113,6 +1119,10 @@
       <div class="form-group">
         <label>Allowed Bucket Prefixes (comma-separated, * for entire bucket)</label>
         <input type="text" id="grantPrefixes" value="*" placeholder="linux/*, isos/*" />
+      </div>
+      <div class="form-group">
+        <label>Allowed Extensions for Upload (comma-separated, optional)</label>
+        <input type="text" id="grantExtensions" placeholder=".iso, .tar.gz (leave empty to inherit repository policy)" />
       </div>
       <div class="form-group">
         <label>Description</label>
@@ -1549,6 +1559,7 @@
     let currentSettingsCategory = "buckets";
     let configuredSSOProviders = [];
     let configuredJWTProviders = [];
+    let configuredAllowedExtensions = [".iso", ".img", ".tar.gz", ".tgz", ".zip", ".qcow2", ".raw"];
 
     function switchSettingsCategory(cat) {
       if (cat === "service-accounts") {
@@ -1812,6 +1823,26 @@
       renderJWTProviderRows();
     }
 
+    function updateUploadModalAllowedExtensions(exts) {
+      const fileInput = document.getElementById("uploadFileInput");
+      const hintEl = document.getElementById("uploadAllowedExtHint");
+      if (!fileInput || !hintEl) return;
+      if (!exts || exts.length === 0 || exts.some(e => e === "*" || e === ".*" || (typeof e === "string" && e.toLowerCase() === "all"))) {
+        fileInput.removeAttribute("accept");
+        hintEl.style.display = "none";
+        hintEl.textContent = "";
+      } else {
+        const acceptStr = exts.map(raw => {
+          let e = String(raw).toLowerCase().trim().replace(/^\*+/, "");
+          if (e && !e.startsWith(".")) e = "." + e;
+          return e;
+        }).filter(e => e && e !== ".").join(",");
+        fileInput.setAttribute("accept", acceptStr);
+        hintEl.style.display = "block";
+        hintEl.textContent = `Allowed extensions: ${exts.join(", ")}`;
+      }
+    }
+
     async function loadSettings() {
       const res = await fetch("/api/v1/settings");
       if (!res.ok) return;
@@ -1858,6 +1889,13 @@
       document.getElementById("setRestoreTier").value = s.default_restore_tier || "Standard";
       document.getElementById("setLogRetentionDays").value = s.access_log_retention_days || 90;
 
+      configuredAllowedExtensions = s.allowed_file_extensions || [];
+      const extInput = document.getElementById("setAllowedExtensions");
+      if (extInput) {
+        extInput.value = configuredAllowedExtensions.join(", ");
+      }
+      updateUploadModalAllowedExtensions(configuredAllowedExtensions);
+
       document.getElementById("setInfoBucket").textContent = `${configuredBuckets.length} bucket(s) configured`;
       document.getElementById("setInfoDynamo").textContent = s.dynamodb_table || "local";
       document.getElementById("setInfoRegion").textContent = `${s.aws_region || 'us-east-1'} (${s.backend_mode || 'aws'})`;
@@ -1887,11 +1925,15 @@
         return;
       }
 
+      const extRaw = document.getElementById("setAllowedExtensions").value;
+      const allowedExts = extRaw.split(",").map(e => e.trim().toLowerCase()).filter(Boolean);
+
       const payload = {
         repository_title: document.getElementById("setRepoTitle").value.trim(),
         default_tree_state: document.getElementById("setDefaultTreeState").value,
         enable_html_autoindex: document.getElementById("setEnableAutoindex").checked,
         enable_checksum_sidecars: document.getElementById("setEnableSidecars").checked,
+        allowed_file_extensions: allowedExts,
         default_restore_days: parseInt(document.getElementById("setRestoreDays").value, 10) || 7,
         default_restore_tier: document.getElementById("setRestoreTier").value,
         access_log_retention_days: parseInt(document.getElementById("setLogRetentionDays").value, 10) || 90,
@@ -2310,7 +2352,22 @@
       }).join("");
 
       document.getElementById("uploadKeyInput").value = relKey;
+      updateUploadModalAllowedExtensions(configuredAllowedExtensions);
       document.getElementById("uploadModal").classList.add("open");
+    }
+
+    function checkKeyExtensionAllowed(key) {
+      if (!key) return false;
+      if (!configuredAllowedExtensions || !configuredAllowedExtensions.length || 
+          configuredAllowedExtensions.some(e => e === "*" || e === ".*" || (typeof e === "string" && e.toLowerCase() === "all"))) {
+        return true;
+      }
+      const lower = String(key).toLowerCase().trim().replace(/\/+$/, "");
+      return configuredAllowedExtensions.some(rawExt => {
+        let ext = String(rawExt).toLowerCase().trim().replace(/^\*+/, "").replace(/\.+$/, "");
+        if (ext && !ext.startsWith(".")) ext = "." + ext;
+        return ext && ext !== "." && lower.endsWith(ext);
+      });
     }
 
     function onFileSelected(input) {
@@ -2319,6 +2376,9 @@
         const keyInput = document.getElementById("uploadKeyInput");
         if (!keyInput.value || keyInput.value.endsWith("/")) {
           keyInput.value = (keyInput.value || "") + file.name;
+        }
+        if (!checkKeyExtensionAllowed(file.name)) {
+          showToast(`Warning: "${file.name}" does not match allowed extensions (${configuredAllowedExtensions.join(", ")})`);
         }
       }
     }
@@ -2331,6 +2391,10 @@
         showToast("Please specify a target key and choose a file");
         return;
       }
+      if (!checkKeyExtensionAllowed(key)) {
+        showToast(`File extension not allowed for upload. Allowed: ${configuredAllowedExtensions.join(", ")}`);
+        return;
+      }
       const formData = new FormData();
       formData.append("file", fileInput.files[0]);
 
@@ -2339,8 +2403,8 @@
         body: formData
       });
       if (!res.ok) {
-        const err = await res.json();
-        showToast(err.error || "Upload failed");
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || `Upload failed (${res.status} ${res.statusText})`);
         return;
       }
       closeModals();
@@ -2520,7 +2584,10 @@
         <tr>
           <td><span class="perm-badge perm-off">${escapeHtml(g.subject_type)}</span></td>
           <td class="mono" style="font-weight:600; color:var(--accent);">${escapeHtml(g.subject_id)}</td>
-          <td class="mono">${escapeHtml((g.prefixes || ["*"]).join(", "))}</td>
+          <td class="mono">
+            <div>${escapeHtml((g.prefixes || ["*"]).join(", "))}</div>
+            ${g.allowed_extensions && g.allowed_extensions.length ? `<div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Exts: <span style="color:var(--accent);">${escapeHtml(g.allowed_extensions.join(", "))}</span></div>` : ''}
+          </td>
           <td><span class="perm-badge ${g.can_read ? 'perm-on' : 'perm-off'}">${g.can_read ? 'YES' : 'NO'}</span></td>
           <td><span class="perm-badge ${g.can_upload ? 'perm-on' : 'perm-off'}">${g.can_upload ? 'YES' : 'NO'}</span></td>
           <td><span class="perm-badge ${g.can_delete ? 'perm-on' : 'perm-off'}">${g.can_delete ? 'YES' : 'NO'}</span></td>
@@ -2534,16 +2601,20 @@
     }
 
     function openGrantModal() {
+      document.getElementById("grantExtensions").value = "";
       document.getElementById("grantModal").classList.add("open");
     }
 
     async function submitGrant() {
       const prefixes = document.getElementById("grantPrefixes").value.split(",").map(s => s.trim()).filter(Boolean);
+      const extRaw = document.getElementById("grantExtensions").value;
+      const allowedExts = extRaw ? extRaw.split(",").map(s => s.trim().toLowerCase()).filter(Boolean) : [];
       const payload = {
         subject_type: document.getElementById("grantSubjectType").value,
         subject_id: document.getElementById("grantSubjectId").value.trim(),
         description: document.getElementById("grantDesc").value.trim(),
         prefixes: prefixes.length ? prefixes : ["*"],
+        allowed_extensions: allowedExts,
         can_read: document.getElementById("grantRead").checked,
         can_upload: document.getElementById("grantUpload").checked,
         can_delete: document.getElementById("grantDelete").checked,

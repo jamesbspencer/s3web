@@ -37,5 +37,6 @@ oidc_groups_claim          = "groups"
 github_oidc_issuer_url     = "https://token.actions.githubusercontent.com"
 bootstrap_admin_email      = "admin@example.com"
 bootstrap_admin_oidc_group = "platform-admins"
-bootstrap_nexus_account_id = "svc-raw-access"
+bootstrap_raw_account_id = "svc-raw-access"
+allowed_file_extensions  = ".iso,.img,.tar.gz,.tgz,.zip,.qcow2,.raw"
 

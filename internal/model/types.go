@@ -183,8 +183,9 @@ type AccessGrant struct {
 	Description string      `json:"description"`
 	SubjectType SubjectType `json:"subject_type"`
 	SubjectID   string      `json:"subject_id"` // e.g. "release-engineering", "alice@corp.com", "repo:my-org/iso-builder:ref:refs/heads/main"
-	Prefixes    []string    `json:"prefixes"`   // e.g. ["*"], ["linux/*", "isos/*"]
-	CanRead     bool        `json:"can_read"`
+	Prefixes          []string    `json:"prefixes"`   // e.g. ["*"], ["linux/*", "isos/*"]
+	AllowedExtensions []string    `json:"allowed_extensions,omitempty"` // e.g. [".iso"], [".tar.gz"]
+	CanRead           bool        `json:"can_read"`
 	CanUpload   bool        `json:"can_upload"`
 	CanDelete   bool        `json:"can_delete"`
 	IsAdmin     bool        `json:"is_admin"`
@@ -293,6 +294,7 @@ type AppSettings struct {
 	DefaultTreeState         string              `json:"default_tree_state"` // "expanded" or "collapsed"
 	EnableHTMLAutoindex      bool                `json:"enable_html_autoindex"`
 	EnableChecksumSidecars   bool                `json:"enable_checksum_sidecars"`
+	AllowedFileExtensions    []string            `json:"allowed_file_extensions"`
 	DefaultRestoreDays       int                 `json:"default_restore_days"`
 	DefaultRestoreTier       string              `json:"default_restore_tier"` // "Standard", "Expedited", "Bulk"
 	AccessLogRetentionDays   int                 `json:"access_log_retention_days"`

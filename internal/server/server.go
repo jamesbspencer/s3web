@@ -57,6 +57,7 @@ func New(cfg *config.Config, st store.MetadataStore, objStore storage.ObjectStor
 			DefaultTreeState:         "expanded",
 			EnableHTMLAutoindex:      true,
 			EnableChecksumSidecars:   true,
+			AllowedFileExtensions:    cfg.AllowedExtensions,
 			DefaultRestoreDays:       7,
 			DefaultRestoreTier:       "Standard",
 			AccessLogRetentionDays:   cfg.AccessLogRetentionDays,
@@ -442,7 +443,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // - DELETE /api/v1/objects/{key}
 func (s *Server) handleObjectsRouter(w http.ResponseWriter, r *http.Request) {
 	rawPath := strings.TrimPrefix(r.URL.Path, "/api/v1/objects/")
-	rawPath = strings.TrimLeft(rawPath, "/")
+	rawPath = strings.TrimSpace(rawPath)
 	if rawPath == "" {
 		writeJSONError(w, http.StatusBadRequest, "object key is required")
 		return
@@ -457,6 +458,13 @@ func (s *Server) handleObjectsRouter(w http.ResponseWriter, r *http.Request) {
 		s.handleObjectLogs(w, r, key)
 	case r.Method == http.MethodGet && strings.HasSuffix(rawPath, "/download"):
 		key := strings.TrimSuffix(rawPath, "/download")
+		key = strings.TrimLeft(strings.TrimSpace(key), "/")
+		p := auth.PrincipalFromContext(r.Context())
+		perm, err := s.evaluator.Resolve(r.Context(), p, key)
+		if err != nil || !perm.CanRead {
+			writeJSONError(w, http.StatusForbidden, "read permission denied")
+			return
+		}
 		s.streamObjectDownload(w, r, key, true)
 	case r.Method == http.MethodPost && strings.HasSuffix(rawPath, "/restore"):
 		key := strings.TrimSuffix(rawPath, "/restore")
@@ -515,6 +523,13 @@ func (s *Server) handleObjectLogs(w http.ResponseWriter, r *http.Request, key st
 
 func (s *Server) handleObjectUpload(w http.ResponseWriter, r *http.Request, key string) {
 	start := time.Now()
+	key = strings.TrimSpace(key)
+	if key == "" || strings.HasSuffix(key, "/") || strings.Trim(key, "/") == "" {
+		writeJSONError(w, http.StatusBadRequest, "invalid object key: upload key cannot be empty or end with a slash")
+		return
+	}
+	key = strings.TrimLeft(key, "/")
+
 	p := auth.PrincipalFromContext(r.Context())
 	perm, err := s.evaluator.Resolve(r.Context(), p, key)
 	if err != nil {
@@ -526,17 +541,62 @@ func (s *Server) handleObjectUpload(w http.ResponseWriter, r *http.Request, key 
 		return
 	}
 
+	if !s.isExtensionAllowed(key) {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("file extension not allowed for upload (allowed: %s)", s.allowedExtensionsDisplay()))
+		return
+	}
+
 	var reader io.Reader = r.Body
 	contentType := r.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "multipart/form-data") {
-		file, header, err := r.FormFile("file")
+		mr, err := r.MultipartReader()
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "missing multipart 'file' field: "+err.Error())
+			writeJSONError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
 			return
 		}
-		defer file.Close()
-		reader = file
-		contentType = header.Header.Get("Content-Type")
+		var foundFile bool
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, "error reading multipart form: "+err.Error())
+				return
+			}
+			if part.FormName() == "file" {
+				foundFile = true
+				filename := part.FileName()
+				if filename != "" {
+					if !s.isExtensionAllowed(filename) {
+						writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("file extension of %q is not allowed for upload (allowed: %s)", filename, s.allowedExtensionsDisplay()))
+						return
+					}
+					cleanFilename := filename
+					if idx := strings.LastIndexAny(cleanFilename, "/\\"); idx != -1 {
+						cleanFilename = cleanFilename[idx+1:]
+					}
+					targetKeyForFile := cleanFilename
+					if dir := filepath.Dir(key); dir != "" && dir != "." && dir != "/" {
+						targetKeyForFile = strings.TrimPrefix(dir, "/") + "/" + cleanFilename
+					}
+					permFile, err := s.evaluator.Resolve(r.Context(), p, targetKeyForFile)
+					if err != nil || !permFile.CanUpload {
+						writeJSONError(w, http.StatusForbidden, fmt.Sprintf("upload permission or file extension not permitted for %q under active access grants", filename))
+						return
+					}
+				}
+				reader = part
+				if ct := part.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "multipart/") {
+					contentType = ct
+				}
+				break
+			}
+		}
+		if !foundFile {
+			writeJSONError(w, http.StatusBadRequest, "missing multipart 'file' field")
+			return
+		}
 	}
 	if contentType == "" || strings.HasPrefix(contentType, "multipart/") {
 		contentType = detectContentType(key)
@@ -577,6 +637,50 @@ func (s *Server) handleObjectUpload(w http.ResponseWriter, r *http.Request, key 
 	s.recordAccessLog(r, p, meta.Key, model.ActionUpload, putRes.Size, http.StatusCreated, false, time.Since(start))
 	saved, _ := s.store.GetObjectMeta(r.Context(), meta.Key)
 	writeJSON(w, http.StatusCreated, saved)
+}
+
+func (s *Server) isExtensionAllowed(key string) bool {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	exts := s.settings.AllowedFileExtensions
+
+	if len(exts) == 0 {
+		return true
+	}
+	cleanKey := strings.TrimRight(strings.TrimSpace(key), "/")
+	lower := strings.ToLower(cleanKey)
+	for _, raw := range exts {
+		e := strings.ToLower(strings.TrimSpace(raw))
+		if e == "" {
+			continue
+		}
+		if e == "*" || e == "all" || e == ".*" {
+			return true
+		}
+		e = strings.TrimPrefix(e, "*")
+		e = strings.TrimRight(e, ".")
+		if e == "" {
+			continue
+		}
+		if !strings.HasPrefix(e, ".") {
+			e = "." + e
+		}
+		if strings.HasSuffix(lower, e) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) allowedExtensionsDisplay() string {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	exts := s.settings.AllowedFileExtensions
+
+	if len(exts) == 0 {
+		return "all extensions allowed (*)"
+	}
+	return strings.Join(exts, ", ")
 }
 
 func (s *Server) handleObjectDelete(w http.ResponseWriter, r *http.Request, key string) {
@@ -793,6 +897,11 @@ func (s *Server) serveRawDirectoryIndex(w http.ResponseWriter, r *http.Request, 
 func (s *Server) streamObjectDownload(w http.ResponseWriter, r *http.Request, key string, forceAttachment bool) {
 	start := time.Now()
 	p := auth.PrincipalFromContext(r.Context())
+	perm, err := s.evaluator.Resolve(r.Context(), p, key)
+	if err != nil || !perm.CanRead {
+		http.Error(w, "403 Forbidden", http.StatusForbidden)
+		return
+	}
 
 	meta, err := s.store.GetObjectMeta(r.Context(), key)
 	if err != nil {
@@ -1152,7 +1261,14 @@ func (s *Server) handleAdminGrants(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "subject_type and subject_id are required")
 			return
 		}
+		if grant.IsAdmin && !rbac.IsGlobalPrefixList(grant.Prefixes) {
+			writeJSONError(w, http.StatusBadRequest, "admin permission (is_admin) can only be granted on global prefixes ('*')")
+			return
+		}
 		grant.UpdatedBy = p.ID
+		if len(grant.AllowedExtensions) > 0 {
+			grant.AllowedExtensions = config.CleanExtensionSlice(grant.AllowedExtensions)
+		}
 		if grant.ID == "" {
 			grant.ID = fmt.Sprintf("grant_%d", time.Now().UnixNano())
 		}
@@ -1364,9 +1480,22 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.settingsMu.RLock()
-		cur := s.settings
-		s.settingsMu.RUnlock()
-		writeJSON(w, http.StatusOK, cur)
+		defer s.settingsMu.RUnlock()
+
+		if !p.EffectivePerm.IsAdmin {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"repository_title":         s.settings.RepositoryTitle,
+				"default_tree_state":       s.settings.DefaultTreeState,
+				"enable_html_autoindex":    s.settings.EnableHTMLAutoindex,
+				"enable_checksum_sidecars": s.settings.EnableChecksumSidecars,
+				"allowed_file_extensions":  s.settings.AllowedFileExtensions,
+				"default_restore_days":     s.settings.DefaultRestoreDays,
+				"default_restore_tier":     s.settings.DefaultRestoreTier,
+				"buckets":                  s.settings.Buckets,
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, s.settings)
 
 	case http.MethodPost, http.MethodPut:
 		if !p.EffectivePerm.IsAdmin {
@@ -1378,6 +1507,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			DefaultTreeState        string `json:"default_tree_state"`
 			EnableHTMLAutoindex     bool   `json:"enable_html_autoindex"`
 			EnableChecksumSidecars  bool   `json:"enable_checksum_sidecars"`
+			AllowedFileExtensions   *[]string `json:"allowed_file_extensions"`
 			DefaultRestoreDays      int    `json:"default_restore_days"`
 			DefaultRestoreTier      string `json:"default_restore_tier"`
 			AccessLogRetentionDays  int    `json:"access_log_retention_days"`
@@ -1397,6 +1527,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
 			return
+		}
+
+		var adminPassHash string
+		newAdminPass := strings.TrimSpace(req.NewAdminPassword)
+		if newAdminPass != "" {
+			var err error
+			adminPassHash, err = auth.HashSecret(newAdminPass)
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "failed to hash password")
+				return
+			}
 		}
 
 		s.settingsMu.Lock()
@@ -1528,6 +1669,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		s.settings.EnableHTMLAutoindex = req.EnableHTMLAutoindex
 		s.settings.EnableChecksumSidecars = req.EnableChecksumSidecars
+		if req.AllowedFileExtensions != nil {
+			s.settings.AllowedFileExtensions = config.CleanExtensionSlice(*req.AllowedFileExtensions)
+		}
 		if req.DefaultRestoreDays > 0 && req.DefaultRestoreDays <= 30 {
 			s.settings.DefaultRestoreDays = req.DefaultRestoreDays
 		}
@@ -1537,15 +1681,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if req.AccessLogRetentionDays > 0 {
 			s.settings.AccessLogRetentionDays = req.AccessLogRetentionDays
 		}
-		if strings.TrimSpace(req.NewAdminPassword) != "" {
-			newAdminPass := strings.TrimSpace(req.NewAdminPassword)
+		if adminPassHash != "" {
 			if adminUser, err := s.store.GetLocalUser(r.Context(), s.cfg.BootstrapAdminUsername); err == nil && adminUser != nil {
-				if hash, hashErr := auth.HashSecret(newAdminPass); hashErr == nil {
-					now := time.Now().UTC()
-					adminUser.PasswordHash = hash
-					adminUser.PasswordChangedAt = &now
-					_ = s.store.UpsertLocalUser(r.Context(), adminUser)
-				}
+				now := time.Now().UTC()
+				adminUser.PasswordHash = adminPassHash
+				adminUser.PasswordChangedAt = &now
+				_ = s.store.UpsertLocalUser(r.Context(), adminUser)
 			}
 		}
 		s.authn.UpdateAuthConfig(

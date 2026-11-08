@@ -20,6 +20,7 @@
 4. **Full-File Linear Hashes (`SHA-256` & `SHA-1`)**: Every object exposes verified full-file `SHA-256` and `SHA-1` digests in the Web UI, API responses, HTTP headers, and sidecar endpoints.
 5. **S3 Intelligent-Tiering Visibility & Restore Workflow**: The S3 bucket uses **S3 Intelligent-Tiering** (`INTELLIGENT_TIERING`). The UI displays the exact access tier each object currently resides in (**Frequent Access**, **Infrequent Access**, **Archive Instant Access**, **Archive Access**, or **Deep Archive Access**), tracks tier transitions automatically via S3 events/HeadObject, and provides one-click asynchronous restoration (`RestoreObject`) if an object has transitioned to an asynchronous archive tier.
 6. **Per-Item Access Logs**: Real-time, item-specific access history viewable directly in the Web UI showing every download, upload, delete, or archive-restore event alongside the principal (SSO user, GitHub workflow, or service account), IP address, User-Agent, and bytes transferred.
+7. **File Extension Limiting (Upload Whitelist)**: Administrators can enforce allowed file extension policies at the repository level (`S3WEB_ALLOWED_EXTENSIONS` or Settings UI) and per In-App Access Grant. Multi-part extensions (`.tar.gz`, `.tar.bz2`) and standard archive formats are supported, with immediate rejection (`400 Bad Request`) for disallowed uploads.
 
 ---
 
@@ -388,6 +389,7 @@ Why application-level logging instead of S3 Server Access Logs?
 | `GET /api/v1/browse?prefix=` | Session / Bearer / Basic | `read` (on prefix) | Lists folders and files at prefix with `intelligent_tier`, `restore_status`, `sha256`, `sha1`, `size`, and `updated_at` |
 | `GET /api/v1/search?q=&tier=` | Session / Bearer / Basic | `read` (per key) | Searches items by filename prefix, Intelligent-Tiering sub-tier, or exact `SHA-256` / `SHA-1` digest |
 | `GET /api/v1/objects/{key...}/meta` | Session / Bearer / Basic | `read` (on prefix) | Returns full metadata, Intelligent-Tiering sub-tier/archive status, and hashes for a single object |
+| `GET /api/v1/objects/{key...}/download` | Session / Bearer / Basic | `read` (on prefix) | Streams direct object download with attachment disposition and per-item access logging |
 | `POST /api/v1/objects/{key...}/restore` | Session / Bearer / Basic | `read` (on prefix) | Initiates `s3:RestoreObject` for items in `ARCHIVE_ACCESS` or `DEEP_ARCHIVE_ACCESS` tiers |
 | `GET /api/v1/objects/{key...}/logs` | Session / Bearer / Basic | `read` (on prefix) | Paginated per-item access logs (`?limit=50&action=DOWNLOAD&actor=...`) |
 | `POST /api/v1/objects/{key...}` | Session / Bearer / Basic | `upload` (on prefix) | Streams upload to S3 while computing linear `SHA-256` & `SHA-1` |
@@ -399,7 +401,7 @@ Why application-level logging instead of S3 Server Access Logs?
 | `PUT /api/v1/admin/local-users/{username}/status` | Session / Basic | `admin` | Enables or disables a specific local user account |
 | `DELETE /api/v1/admin/local-users/{username}` | Session / Basic | `admin` | Deletes a local user account |
 | `GET /api/v1/admin/grants` | Session / Basic | `admin` | Lists all in-app Upload/Delete/Admin Access Grants |
-| `POST /api/v1/admin/grants` | Session / Basic | `admin` | Creates or updates an in-app Access Grant (`upload`, `delete`, `prefixes`) |
+| `POST /api/v1/admin/grants` | Session / Basic | `admin` | Creates or updates an in-app Access Grant (`upload`, `delete`, `prefixes`, `allowed_extensions`, `is_admin`) |
 | `DELETE /api/v1/admin/grants/{id}` | Session / Basic | `admin` | Deletes an in-app Access Grant |
 | `GET /api/v1/admin/groups` | Session / Basic | `admin` | Lists App-Managed Groups and their members |
 | `POST /api/v1/admin/groups` | Session / Basic | `admin` | Creates or updates an App-Managed Group |

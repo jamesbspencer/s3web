@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -600,6 +601,358 @@ func TestAccessGrantsAndSettingsLifecycle(t *testing.T) {
 	delGrantResp.Body.Close()
 	if delGrantResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK on deleting grant, got %d", delGrantResp.StatusCode)
+	}
+}
+
+func TestAllowedFileExtensionsLimiting(t *testing.T) {
+	srv, cfg := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	// 1. Configure allowed extensions to: .iso, .img, .tar.gz
+	setPayload := map[string]interface{}{
+		"repository_title":        "Extension Limited Repo",
+		"allowed_file_extensions": []string{".iso", ".img", ".tar.gz"},
+	}
+	body, _ := json.Marshal(setPayload)
+	putReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings", bytes.NewReader(body))
+	putReq.Header.Set("Content-Type", "application/json")
+	putReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	putResp, err := client.Do(putReq)
+	if err != nil {
+		t.Fatalf("PUT settings: %v", err)
+	}
+	putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK configuring allowed extensions, got %d", putResp.StatusCode)
+	}
+
+	// 2. Upload valid extensions: .iso, .tar.gz, .img (should succeed)
+	validFiles := []string{
+		"isos/ubuntu-24.04.iso",
+		"archives/build-123.tar.gz",
+		"images/raw-disk.IMG", // case-insensitive
+	}
+	for _, k := range validFiles {
+		upReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/"+k, strings.NewReader("dummy payload content"))
+		upReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+		upResp, err := client.Do(upReq)
+		if err != nil {
+			t.Fatalf("upload %s: %v", k, err)
+		}
+		upResp.Body.Close()
+		if upResp.StatusCode != http.StatusCreated {
+			t.Fatalf("expected 201 Created for valid extension %s, got %d", k, upResp.StatusCode)
+		}
+	}
+
+	// 3. Upload invalid extensions: .exe, .sh, .zip (should fail with 400 Bad Request)
+	invalidFiles := []string{
+		"payloads/malicious.exe",
+		"scripts/deploy.sh",
+		"packages/archive.zip",
+	}
+	for _, k := range invalidFiles {
+		upReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/"+k, strings.NewReader("dummy payload content"))
+		upReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+		upResp, err := client.Do(upReq)
+		if err != nil {
+			t.Fatalf("upload %s: %v", k, err)
+		}
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(upResp.Body).Decode(&errResp)
+		upResp.Body.Close()
+		if upResp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for disallowed extension %s, got %d", k, upResp.StatusCode)
+		}
+		if !strings.Contains(strings.ToLower(errResp.Error), "not allowed") {
+			t.Fatalf("expected 'not allowed' in error message for %s, got %q", k, errResp.Error)
+		}
+	}
+
+	// 4. Update settings to allow wildcard "*" (unrestricted)
+	wildPayload := map[string]interface{}{
+		"allowed_file_extensions": []string{"*"},
+	}
+	body, _ = json.Marshal(wildPayload)
+	putReq, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings", bytes.NewReader(body))
+	putReq.Header.Set("Content-Type", "application/json")
+	putReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	putResp, err = client.Do(putReq)
+	if err != nil {
+		t.Fatalf("PUT settings wildcard: %v", err)
+	}
+	putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK updating wildcard settings, got %d", putResp.StatusCode)
+	}
+
+	// Previously disallowed .zip and .exe should now succeed with wildcard
+	for _, k := range []string{"packages/archive.zip", "binaries/tool.exe"} {
+		upReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/"+k, strings.NewReader("dummy payload content"))
+		upReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+		upResp, err := client.Do(upReq)
+		if err != nil {
+			t.Fatalf("upload %s with wildcard: %v", k, err)
+		}
+		upResp.Body.Close()
+		if upResp.StatusCode != http.StatusCreated {
+			t.Fatalf("expected 201 Created under wildcard for %s, got %d", k, upResp.StatusCode)
+		}
+	}
+
+	// 5. In-App Access Grant with grant-specific allowed_extensions
+	grantPayload := map[string]interface{}{
+		"subject_type":       model.SubjectLocalUser,
+		"subject_id":         "demo",
+		"prefixes":           []string{"demo-only/*"},
+		"allowed_extensions": []string{".iso"},
+		"can_read":           true,
+		"can_upload":         true,
+	}
+	gBody, _ := json.Marshal(grantPayload)
+	gReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/grants", bytes.NewReader(gBody))
+	gReq.Header.Set("Content-Type", "application/json")
+	gReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	gResp, err := client.Do(gReq)
+	if err != nil {
+		t.Fatalf("create grant: %v", err)
+	}
+	gResp.Body.Close()
+	if gResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created creating grant, got %d", gResp.StatusCode)
+	}
+
+	// Demo user uploading .iso -> succeeds
+	demoIsoReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/demo-only/test.iso", strings.NewReader("iso payload"))
+	demoIsoReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	demoIsoResp, err := client.Do(demoIsoReq)
+	if err != nil {
+		t.Fatalf("demo upload iso: %v", err)
+	}
+	demoIsoResp.Body.Close()
+	if demoIsoResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for demo .iso upload, got %d", demoIsoResp.StatusCode)
+	}
+
+	// Demo user uploading .tar.gz -> fails with 403 Forbidden because grant restricts to .iso
+	demoTarReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/demo-only/test.tar.gz", strings.NewReader("tar payload"))
+	demoTarReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	demoTarResp, err := client.Do(demoTarReq)
+	if err != nil {
+		t.Fatalf("demo upload tar: %v", err)
+	}
+	demoTarResp.Body.Close()
+	if demoTarResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for demo uploading .tar.gz when grant restricts to .iso, got %d", demoTarResp.StatusCode)
+	}
+}
+
+func TestSecurityRemediationsAndEdgeCases(t *testing.T) {
+	srv, cfg := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	// 1. Multipart Form Upload Streaming & Validation
+	var mpBuf bytes.Buffer
+	mpWriter := multipart.NewWriter(&mpBuf)
+	part, err := mpWriter.CreateFormFile("file", "image.iso")
+	if err != nil {
+		t.Fatalf("create multipart part: %v", err)
+	}
+	part.Write([]byte("multipart iso stream content"))
+	mpWriter.Close()
+
+	mpReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/objects/isos/image.iso", &mpBuf)
+	mpReq.Header.Set("Content-Type", mpWriter.FormDataContentType())
+	mpReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	mpResp, err := client.Do(mpReq)
+	if err != nil {
+		t.Fatalf("multipart upload: %v", err)
+	}
+	mpResp.Body.Close()
+	if mpResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for multipart upload, got %d", mpResp.StatusCode)
+	}
+
+	// Multipart upload with disallowed filename extension
+	var badMpBuf bytes.Buffer
+	badMpWriter := multipart.NewWriter(&badMpBuf)
+	badPart, _ := badMpWriter.CreateFormFile("file", "malicious.sh")
+	badPart.Write([]byte("#!/bin/sh\n"))
+	badMpWriter.Close()
+
+	badMpReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/objects/isos/script.iso", &badMpBuf)
+	badMpReq.Header.Set("Content-Type", badMpWriter.FormDataContentType())
+	badMpReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	badMpResp, err := client.Do(badMpReq)
+	if err != nil {
+		t.Fatalf("bad multipart upload: %v", err)
+	}
+	badMpResp.Body.Close()
+	if badMpResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for disallowed multipart filename, got %d", badMpResp.StatusCode)
+	}
+
+	// Multipart upload by non-admin with prefix-scoped grant (demo on scoped-dir/*)
+	demoGrantPayload := map[string]interface{}{
+		"subject_type":       model.SubjectLocalUser,
+		"subject_id":         "demo",
+		"prefixes":           []string{"scoped-dir/*"},
+		"allowed_extensions": []string{".iso"},
+		"can_upload":         true,
+	}
+	dgBody, _ := json.Marshal(demoGrantPayload)
+	dgReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/grants", bytes.NewReader(dgBody))
+	dgReq.Header.Set("Content-Type", "application/json")
+	dgReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	dgResp, err := client.Do(dgReq)
+	if err != nil {
+		t.Fatalf("create scoped grant: %v", err)
+	}
+	dgResp.Body.Close()
+
+	var scopedMpBuf bytes.Buffer
+	scopedMpWriter := multipart.NewWriter(&scopedMpBuf)
+	scopedPart, _ := scopedMpWriter.CreateFormFile("file", "test-scoped.iso")
+	scopedPart.Write([]byte("scoped iso payload"))
+	scopedMpWriter.Close()
+
+	scopedMpReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/objects/scoped-dir/test-scoped.iso", &scopedMpBuf)
+	scopedMpReq.Header.Set("Content-Type", scopedMpWriter.FormDataContentType())
+	scopedMpReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	scopedMpResp, err := client.Do(scopedMpReq)
+	if err != nil {
+		t.Fatalf("scoped multipart upload: %v", err)
+	}
+	scopedMpResp.Body.Close()
+	if scopedMpResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for demo scoped multipart upload, got %d", scopedMpResp.StatusCode)
+	}
+
+	// 2. Trailing Slash Upload Rejection
+	slashReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/isos/trailing.iso/", strings.NewReader("content"))
+	slashReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	slashResp, err := client.Do(slashReq)
+	if err != nil {
+		t.Fatalf("trailing slash upload: %v", err)
+	}
+	slashResp.Body.Close()
+	if slashResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for trailing slash upload, got %d", slashResp.StatusCode)
+	}
+
+	// 3. Object Download Read Authorization
+	// Upload an object to confidential/data.iso as admin
+	upReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/confidential/data.iso", strings.NewReader("secret payload"))
+	upReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	upResp, err := client.Do(upReq)
+	if err != nil {
+		t.Fatalf("upload confidential: %v", err)
+	}
+	upResp.Body.Close()
+	if upResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d", upResp.StatusCode)
+	}
+
+	// Create service account without read grants
+	saPayload := map[string]interface{}{
+		"account_id":  "upload-bot",
+		"description": "Upload-only bot",
+	}
+	saBody, _ := json.Marshal(saPayload)
+	saReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/service-accounts", bytes.NewReader(saBody))
+	saReq.Header.Set("Content-Type", "application/json")
+	saReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	saResp, err := client.Do(saReq)
+	if err != nil {
+		t.Fatalf("create service account: %v", err)
+	}
+	var saCreated struct {
+		Secret string `json:"secret"`
+	}
+	json.NewDecoder(saResp.Body).Decode(&saCreated)
+	saResp.Body.Close()
+	if saResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created creating service account, got %d", saResp.StatusCode)
+	}
+
+	// Service account attempts to download confidential/data.iso without read grant -> 403 Forbidden
+	saDlReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/objects/confidential/data.iso/download", nil)
+	saDlReq.Header.Set("Authorization", "Bearer upload-bot:"+saCreated.Secret)
+	saDlResp, err := client.Do(saDlReq)
+	if err != nil {
+		t.Fatalf("sa download: %v", err)
+	}
+	saDlResp.Body.Close()
+	if saDlResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for unauthorized download, got %d", saDlResp.StatusCode)
+	}
+
+	// Admin downloads confidential/data.iso -> 200 OK
+	adminDlReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/objects/confidential/data.iso/download", nil)
+	adminDlReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	adminDlResp, err := client.Do(adminDlReq)
+	if err != nil {
+		t.Fatalf("admin download: %v", err)
+	}
+	dlContent, _ := io.ReadAll(adminDlResp.Body)
+	adminDlResp.Body.Close()
+	if adminDlResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for admin download, got %d", adminDlResp.StatusCode)
+	}
+	if string(dlContent) != "secret payload" {
+		t.Fatalf("download content mismatch: got %q", string(dlContent))
+	}
+
+	// 4. Scoped is_admin Grant Creation Rejection
+	badGrantPayload := map[string]interface{}{
+		"subject_type": model.SubjectLocalUser,
+		"subject_id":   "demo",
+		"prefixes":     []string{"demo-only/*"},
+		"is_admin":     true,
+	}
+	bgBody, _ := json.Marshal(badGrantPayload)
+	bgReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/grants", bytes.NewReader(bgBody))
+	bgReq.Header.Set("Content-Type", "application/json")
+	bgReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	bgResp, err := client.Do(bgReq)
+	if err != nil {
+		t.Fatalf("create bad grant: %v", err)
+	}
+	bgResp.Body.Close()
+	if bgResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for scoped is_admin grant, got %d", bgResp.StatusCode)
+	}
+
+	// 5. Settings Information Disclosure Redaction
+	demoSetReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/settings", nil)
+	demoSetReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	demoSetResp, err := client.Do(demoSetReq)
+	if err != nil {
+		t.Fatalf("demo get settings: %v", err)
+	}
+	var demoSettings map[string]interface{}
+	json.NewDecoder(demoSetResp.Body).Decode(&demoSettings)
+	demoSetResp.Body.Close()
+	if demoSetResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for demo get settings, got %d", demoSetResp.StatusCode)
+	}
+	if _, ok := demoSettings["dynamodb_table"]; ok {
+		t.Fatalf("expected dynamodb_table to be redacted for non-admin, found %v", demoSettings["dynamodb_table"])
+	}
+	if _, ok := demoSettings["sqs_queue_url"]; ok {
+		t.Fatalf("expected sqs_queue_url to be redacted for non-admin, found %v", demoSettings["sqs_queue_url"])
+	}
+	if _, ok := demoSettings["bootstrap_admin_oidc_group"]; ok {
+		t.Fatalf("expected bootstrap_admin_oidc_group to be redacted for non-admin, found %v", demoSettings["bootstrap_admin_oidc_group"])
+	}
+	if _, ok := demoSettings["allowed_file_extensions"]; !ok {
+		t.Fatalf("expected allowed_file_extensions to be present in public settings")
 	}
 }
 

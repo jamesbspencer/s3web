@@ -52,6 +52,9 @@ type Config struct {
 	BootstrapRawAccountID    string
 	BootstrapRawAccountKey   string
 
+	// File Extensions Whitelist
+	AllowedExtensions []string
+
 	// Log Retention
 	AccessLogRetentionDays int
 	WorkerPollInterval     time.Duration
@@ -91,9 +94,46 @@ func Load() *Config {
 		BootstrapDemoPassword:    getEnv("S3WEB_BOOTSTRAP_DEMO_PASSWORD", ""),
 		BootstrapRawAccountID:    getEnv("S3WEB_BOOTSTRAP_RAW_ID", "svc-raw-access"),
 		BootstrapRawAccountKey:   getEnv("S3WEB_BOOTSTRAP_RAW_SECRET", randomFallbackSecret(24, "s3w_")),
+		AllowedExtensions:        ParseExtensionList(getEnv("S3WEB_ALLOWED_EXTENSIONS", ".iso,.img,.tar.gz,.tgz,.zip,.qcow2,.raw")),
 		AccessLogRetentionDays:   getEnvInt("S3WEB_LOG_RETENTION_DAYS", 90),
 		WorkerPollInterval:       time.Duration(getEnvInt("S3WEB_WORKER_POLL_SECONDS", 15)) * time.Second,
 	}
+}
+
+// ParseExtensionList parses a comma-separated list of extensions (e.g. ".iso, .img, .tar.gz" or "iso, img, tar.gz")
+// and returns cleaned, lowercase extensions with leading dots. An empty string or "*" returns an empty slice (unrestricted).
+func ParseExtensionList(s string) []string {
+	parts := strings.Split(s, ",")
+	return CleanExtensionSlice(parts)
+}
+
+// CleanExtensionSlice normalizes a slice of extension strings to lowercase with leading dots.
+// An empty slice, "*", "all", or ".*" returns an empty slice (unrestricted).
+func CleanExtensionSlice(exts []string) []string {
+	cleaned := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, raw := range exts {
+		e := strings.ToLower(strings.TrimSpace(raw))
+		if e == "" {
+			continue
+		}
+		if e == "*" || e == "all" || e == ".*" {
+			return []string{} // unrestricted
+		}
+		e = strings.TrimPrefix(e, "*")
+		e = strings.TrimRight(e, ".")
+		if e == "" || e == "." || strings.ContainsAny(e, "/\\ \t") {
+			continue
+		}
+		if !strings.HasPrefix(e, ".") {
+			e = "." + e
+		}
+		if len(e) > 1 && !seen[e] {
+			seen[e] = true
+			cleaned = append(cleaned, e)
+		}
+	}
+	return cleaned
 }
 
 func randomFallbackSecret(byteLen int, prefix string) string {

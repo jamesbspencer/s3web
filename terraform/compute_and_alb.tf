@@ -413,6 +413,7 @@ resource "aws_ecs_task_definition" "s3web" {
         { name = "S3WEB_BOOTSTRAP_ADMIN_EMAIL", value = var.bootstrap_admin_email },
         { name = "S3WEB_BOOTSTRAP_ADMIN_GROUP", value = var.bootstrap_admin_oidc_group },
         { name = "S3WEB_BOOTSTRAP_RAW_ID", value = var.bootstrap_raw_account_id },
+        { name = "S3WEB_ALLOWED_EXTENSIONS", value = var.allowed_file_extensions },
         { name = "S3WEB_LOG_RETENTION_DAYS", value = tostring(var.access_log_retention_days) }
       ]
       secrets = [

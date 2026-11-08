@@ -224,6 +224,12 @@ variable "access_log_retention_days" {
   default     = 90
 }
 
+variable "allowed_file_extensions" {
+  description = "Comma-separated list of whitelisted file extensions for uploads (e.g. .iso,.img,.tar.gz)."
+  type        = string
+  default     = ".iso,.img,.tar.gz,.tgz,.zip,.qcow2,.raw"
+}
+
 variable "tags" {
   description = "Additional tags to apply to all resources."
   type        = map(string)

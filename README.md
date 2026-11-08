@@ -17,6 +17,7 @@
   - **Service Accounts**: HTTP Basic Auth & Bearer tokens for automated HTML Raw Access and CLI scripts.
 - **HTML Raw Access (`/raw/*`)**: Uses the exact same access control as the default UI and supports `GET`, `HEAD`, `Range` requests, `ETag`, `X-Checksum-Sha256`, `X-Checksum-Sha1`, Apache/Nginx-style HTML `autoindex` directory listings, and virtual `.sha256` / `.sha1` sidecar files.
 - **Streaming Linear Dual-Hashing (`SHA-256` + `SHA-1`)**: Computes full-file linear `SHA-256` and `SHA-1` in a single streaming pass during upload (`internal/hashstream`).
+- **File Extension Limiting (Upload Whitelist)**: Configurable repository-level and grant-scoped allowed extension policy (e.g., `.iso`, `.img`, `.tar.gz`, `.tgz`, `.zip`, `.qcow2`, `.raw`) preventing unauthorized file types from being uploaded.
 - **S3 Intelligent-Tiering Visibility**: Displays each object's current Intelligent-Tiering sub-tier (`FA`, `IA`, `AIA`, `AA`, `DAA`) and supports one-click archive restoration (`RestoreObject`).
 - **Per-Item Access Logs**: Real-time per-object access log drawer showing downloads, uploads, restores, and deletes with principal attribution.
 
@@ -27,6 +28,13 @@
 go run ./cmd/s3web
 # Open http://localhost:8080
 ```
+
+### Essential Environment Variables
+- `S3WEB_ALLOWED_EXTENSIONS`: Comma-separated upload extension whitelist (default: `.iso,.img,.tar.gz,.tgz,.zip,.qcow2,.raw`; use `*` for unrestricted).
+- `S3WEB_S3_BUCKET`: Amazon S3 bucket name.
+- `S3WEB_DYNAMODB_TABLE`: Amazon DynamoDB table name for metadata and settings.
+- `S3WEB_BOOTSTRAP_ADMIN_USERNAME`: Default admin username (default: `admin`).
+- `S3WEB_BOOTSTRAP_RAW_ID`: Default service account ID for automated raw access (default: `svc-raw-access`).
 
 ### Run Tests
 ```bash

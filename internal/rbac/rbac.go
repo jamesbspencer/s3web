@@ -54,16 +54,22 @@ func (e *Evaluator) Resolve(ctx context.Context, p *model.Principal, targetKey s
 			perm.CanRead = true
 		}
 		if g.CanUpload {
-			perm.CanUpload = true
+			if len(g.AllowedExtensions) == 0 || targetKey == "" || strings.HasSuffix(targetKey, "/") || extensionMatches(targetKey, g.AllowedExtensions) {
+				perm.CanUpload = true
+			}
 		}
 		if g.CanDelete {
 			perm.CanDelete = true
 		}
 		if g.IsAdmin {
-			perm.IsAdmin = true
-			perm.CanRead = true
-			perm.CanUpload = true
-			perm.CanDelete = true
+			// Scoped grants cannot grant root administrative rights across the entire repository.
+			// is_admin is only valid on global grants (empty prefixes or containing "*").
+			if IsGlobalPrefixList(g.Prefixes) {
+				perm.IsAdmin = true
+				perm.CanRead = true
+				perm.CanUpload = true
+				perm.CanDelete = true
+			}
 		}
 		perm.Grants = append(perm.Grants, g.ID)
 	}
@@ -202,5 +208,48 @@ func wildcardMatch(pattern, name string) bool {
 		return true
 	}
 	return idx <= len(name)-len(parts[len(parts)-1])
+}
+
+// IsGlobalPrefixList returns true if prefixes is empty or includes a global wildcard pattern ("*", "**").
+func IsGlobalPrefixList(prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, p := range prefixes {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" || trimmed == "*" || trimmed == "**" {
+			return true
+		}
+	}
+	return false
+}
+
+func extensionMatches(key string, exts []string) bool {
+	if len(exts) == 0 {
+		return true
+	}
+	cleanKey := strings.TrimRight(strings.TrimSpace(key), "/")
+	lower := strings.ToLower(cleanKey)
+	for _, raw := range exts {
+		e := strings.ToLower(strings.TrimSpace(raw))
+		if e == "" {
+			continue
+		}
+		if e == "*" || e == "all" || e == ".*" {
+			return true
+		}
+		e = strings.TrimPrefix(e, "*")
+		e = strings.TrimRight(e, ".")
+		if e == "" {
+			continue
+		}
+		if !strings.HasPrefix(e, ".") {
+			e = "." + e
+		}
+		if strings.HasSuffix(lower, e) {
+			return true
+		}
+	}
+	return false
 }
 
