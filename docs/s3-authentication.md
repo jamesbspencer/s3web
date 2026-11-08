@@ -200,7 +200,7 @@ sequenceDiagram
 
 ## 5. Storage Layer Interface in Go
 
-In the codebase, object storage is abstracted behind the [`ObjectStorage`](file:///Users/jspencer/projects/s3web/internal/storage/storage.go) interface:
+In the codebase, object storage is abstracted behind the [`ObjectStorage`](../internal/storage/storage.go) interface:
 
 ```go
 type ObjectStorage interface {
@@ -211,6 +211,6 @@ type ObjectStorage interface {
 }
 ```
 
-- **Local Storage Implementation**: [`LocalFSStorage`](file:///Users/jspencer/projects/s3web/internal/storage/storage.go) emulates S3 behavior locally for development and offline testing.
+- **Local Storage Implementation**: [`LocalFSStorage`](../internal/storage/storage.go) emulates S3 behavior locally for development and offline testing.
 - **S3 Storage Implementation**: When integrating the AWS Go SDK (`aws-sdk-go-v2/service/s3`), `config.LoadDefaultConfig(ctx)` discovers the ECS container metadata credentials automatically. No custom credential provider or configuration file is required.
 

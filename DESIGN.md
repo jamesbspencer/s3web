@@ -12,8 +12,8 @@
    - Hosted in an isolated AWS VPC containing **only private subnets** (no Internet Gateway, no public subnets, and no public IP addresses), accessed exclusively via a corporate **VPN (Virtual Private Gateway / AWS Transit Gateway / Client VPN)**.
    - Built with **zero external CDN dependencies** (`//go:embed` self-contained UI with inline SVG assets; no runtime internet access or external fonts/scripts required).
    - All AWS service dependencies (`S3`, `DynamoDB`, `ECR`, `CloudWatch Logs`, `Secrets Manager`, `SQS`, `KMS`) are reached via **VPC Gateway and Interface Endpoints (AWS PrivateLink)**.
-2. **Authentication & In-App RBAC (Zero Anonymous Access)**:
-   - **Anonymous Access Disabled**: Every request to `/api/v1/*` and `/raw/*` requires authentication (Session Cookie, HTTP Basic Auth, or Bearer Token/JWT).
+2. **Authentication & In-App RBAC**:
+   - **Anonymous Access Disabled by Default**: By default, every request to `/api/v1/*` and `/raw/*` requires authentication (Session Cookie, HTTP Basic Auth, or Bearer Token/JWT). When enabled via `S3WEB_ANONYMOUS_ACCESS=true` or runtime Settings, anonymous callers receive read-only permissions (`CanRead: true`, `CanUpload: false`, `CanDelete: false`, `IsAdmin: false`).
    - **Local User Accounts (`LOCAL_USER`)**: Built-in local accounts stored with PBKDF2-SHA256 salted password hashes. On initial install, `s3web` automatically creates a default `admin` account with a cryptographically random generated password and a `demo` local user account. Local users can update their own passwords, and administrators can reset passwords or disable individual or all local accounts.
    - **Human Users (Multi-SSO)**: Multiple OIDC / OAuth 2.0 SSO providers (Okta, Microsoft Entra ID, Keycloak, or AWS IAM Identity Center) configurable in Settings and reachable over the VPN/private network.
    - **CI Workflows (Multi-JWT Workload Identity / OIDC JWT)**: Multiple configurable OIDC JWT issuers (e.g., GitHub Actions, GitLab CI, Buildkite) validated against cached/pinned JWKS keys, `iss`, `aud`, and `exp`, and matched against repository/branch/environment claims.

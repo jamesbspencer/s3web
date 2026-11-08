@@ -536,6 +536,65 @@
         }
       }
     },
+    "/api/v1/objects/{key}/logs": {
+      "get": {
+        "tags": [
+          "Object Operations & Tiering"
+        ],
+        "summary": "Get per-item access logs",
+        "description": "Returns audit access log events recorded for a specific object.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "Object key",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Filter by action (DOWNLOAD, UPLOAD, DELETE, RESTORE, HEAD)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor",
+            "in": "query",
+            "description": "Filter by actor ID or principal type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of logs (default 100)",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of access log entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccessLogEntry"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/objects/{key}/restore": {
       "post": {
         "tags": [
@@ -830,9 +889,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/LocalUser"
+                  "type": "object",
+                  "properties": {
+                    "local_users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LocalUser"
+                      }
+                    }
                   }
                 }
               }
@@ -898,9 +962,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/AccessGrant"
+                  "type": "object",
+                  "properties": {
+                    "grants": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AccessGrant"
+                      }
+                    }
                   }
                 }
               }
@@ -930,6 +999,56 @@
         }
       }
     },
+    "/api/v1/admin/groups": {
+      "get": {
+        "tags": [
+          "Access Grants & RBAC"
+        ],
+        "summary": "List app-managed groups",
+        "description": "Returns all app-managed groups and their memberships.",
+        "responses": {
+          "200": {
+            "description": "List of app-managed groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AppGroup"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Access Grants & RBAC"
+        ],
+        "summary": "Create or update an app group",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppGroup"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "App group persisted"
+          }
+        }
+      }
+    },
     "/api/v1/admin/service-accounts": {
       "get": {
         "tags": [
@@ -942,9 +1061,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ServiceAccount"
+                  "type": "object",
+                  "properties": {
+                    "service_accounts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ServiceAccount"
+                      }
+                    }
                   }
                 }
               }
@@ -1100,6 +1224,14 @@
             "type": "string",
             "format": "date-time"
           },
+          "uploaded_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
           "last_accessed_at": {
             "type": "string",
             "format": "date-time"
@@ -1246,37 +1378,64 @@
           "id": {
             "type": "string"
           },
-          "grantee_type": {
+          "subject_type": {
             "type": "string",
             "enum": [
-              "USER",
-              "GROUP",
-              "ALL"
+              "BUILTIN",
+              "OIDC_GROUP",
+              "APP_GROUP",
+              "SSO_USER",
+              "LOCAL_USER",
+              "GITHUB_WORKFLOW",
+              "SERVICE_ACCOUNT",
+              "ANONYMOUS"
             ]
           },
-          "grantee_id": {
+          "subject_id": {
             "type": "string"
           },
           "prefix": {
             "type": "string"
           },
-          "permissions": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "READ",
-                "UPLOAD",
-                "DELETE",
-                "ADMIN"
-              ]
-            }
+          "can_read": {
+            "type": "boolean"
           },
-          "allowed_file_extensions": {
+          "can_upload": {
+            "type": "boolean"
+          },
+          "can_delete": {
+            "type": "boolean"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AppGroup": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "members": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -1289,19 +1448,23 @@
           "name": {
             "type": "string"
           },
-          "permissions": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+          "created_by": {
+            "type": "string"
           },
           "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
             "type": "string",
             "format": "date-time"
           },
           "last_used_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "revoked": {
+            "type": "boolean"
           }
         }
       }

@@ -11,6 +11,8 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -112,6 +114,18 @@ func New(cfg *config.Config, st store.MetadataStore, objStore storage.ObjectStor
 		},
 	}
 
+	if persistedSettings, err := s.store.GetSettings(context.Background()); err == nil && persistedSettings != nil {
+		s.settings = *persistedSettings
+		s.authn.SetAnonymousAccessEnabled(persistedSettings.AnonymousAccessEnabled)
+		s.authn.UpdateAuthConfig(
+			persistedSettings.BootstrapAdminOIDCGroup,
+			persistedSettings.GitHubOIDCEnabled,
+			persistedSettings.GitHubOIDCIssuerURL,
+			persistedSettings.GitHubOIDCAudience,
+			persistedSettings.JWTProviders,
+		)
+	}
+
 	if err := s.seedBootstrapData(context.Background()); err != nil {
 		return nil, fmt.Errorf("seed bootstrap data: %w", err)
 	}
@@ -124,6 +138,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Security headers for private VPC deployment
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'")
+
+	// Path traversal protection across all endpoints
+	if strings.Contains(r.URL.Path, "..") {
+		http.Error(w, "400 Bad Request: Invalid path", http.StatusBadRequest)
+		return
+	}
+
 	s.mux.ServeHTTP(w, r)
 }
 
@@ -466,6 +490,27 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func cleanObjectKey(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasSuffix(raw, "/") {
+		return "", errors.New("invalid object key: trailing slash not allowed for object")
+	}
+	raw = strings.TrimLeft(raw, "/")
+	if raw == "" {
+		return "", errors.New("empty object key")
+	}
+	cleaned := path.Clean(raw)
+	if cleaned == "." || strings.HasPrefix(cleaned, "..") || strings.Contains(raw, "..") {
+		return "", errors.New("invalid object key: path traversal detected")
+	}
+	return cleaned, nil
+}
+
+// CleanObjectKey validates and sanitizes an object key, preventing path traversal and invalid suffixes.
+func CleanObjectKey(raw string) (string, error) {
+	return cleanObjectKey(raw)
+}
+
 // handleObjectsRouter routes /api/v1/objects/{key...} actions:
 // - GET /api/v1/objects/{key}/meta
 // - GET /api/v1/objects/{key}/logs
@@ -484,14 +529,25 @@ func (s *Server) handleObjectsRouter(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && strings.HasSuffix(rawPath, "/meta"):
-		key := strings.TrimSuffix(rawPath, "/meta")
+		key, err := cleanObjectKey(strings.TrimSuffix(rawPath, "/meta"))
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		s.handleObjectMeta(w, r, key)
 	case r.Method == http.MethodGet && strings.HasSuffix(rawPath, "/logs"):
-		key := strings.TrimSuffix(rawPath, "/logs")
+		key, err := cleanObjectKey(strings.TrimSuffix(rawPath, "/logs"))
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		s.handleObjectLogs(w, r, key)
 	case r.Method == http.MethodGet && strings.HasSuffix(rawPath, "/download"):
-		key := strings.TrimSuffix(rawPath, "/download")
-		key = strings.TrimLeft(strings.TrimSpace(key), "/")
+		key, err := cleanObjectKey(strings.TrimSuffix(rawPath, "/download"))
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		p := auth.PrincipalFromContext(r.Context())
 		perm, err := s.evaluator.Resolve(r.Context(), p, key)
 		if err != nil || !perm.CanRead {
@@ -500,15 +556,33 @@ func (s *Server) handleObjectsRouter(w http.ResponseWriter, r *http.Request) {
 		}
 		s.streamObjectDownload(w, r, key, true)
 	case r.Method == http.MethodPost && strings.HasSuffix(rawPath, "/restore"):
-		key := strings.TrimSuffix(rawPath, "/restore")
+		key, err := cleanObjectKey(strings.TrimSuffix(rawPath, "/restore"))
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		s.handleObjectRestore(w, r, key)
 	case r.Method == http.MethodPost && strings.HasSuffix(rawPath, "/tier"):
-		key := strings.TrimSuffix(rawPath, "/tier")
+		key, err := cleanObjectKey(strings.TrimSuffix(rawPath, "/tier"))
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		s.handleObjectTierUpdate(w, r, key)
 	case r.Method == http.MethodPost || r.Method == http.MethodPut:
-		s.handleObjectUpload(w, r, rawPath)
+		key, err := cleanObjectKey(rawPath)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.handleObjectUpload(w, r, key)
 	case r.Method == http.MethodDelete:
-		s.handleObjectDelete(w, r, rawPath)
+		key, err := cleanObjectKey(rawPath)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.handleObjectDelete(w, r, key)
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "unsupported object operation")
 	}
@@ -746,9 +820,28 @@ func (s *Server) handleObjectDelete(w http.ResponseWriter, r *http.Request, key 
 func (s *Server) handleObjectRestore(w http.ResponseWriter, r *http.Request, key string) {
 	start := time.Now()
 	p := auth.PrincipalFromContext(r.Context())
+	if p == nil || p.Type == model.PrincipalAnonymous {
+		writeJSONError(w, http.StatusUnauthorized, "authenticated user required to initiate object restore")
+		return
+	}
 	perm, err := s.evaluator.Resolve(r.Context(), p, key)
 	if err != nil || !perm.CanRead {
 		writeJSONError(w, http.StatusForbidden, "permission denied")
+		return
+	}
+
+	meta, err := s.store.GetObjectMeta(r.Context(), key)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSONError(w, http.StatusNotFound, "object not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if !meta.IsAsyncArchived() {
+		writeJSONError(w, http.StatusBadRequest, "object is not in an asynchronous archive tier")
 		return
 	}
 
@@ -776,7 +869,7 @@ func (s *Server) handleObjectRestore(w http.ResponseWriter, r *http.Request, key
 		return
 	}
 	s.recordAccessLog(r, p, key, model.ActionRestore, 0, http.StatusAccepted, false, time.Since(start))
-	meta, _ := s.store.GetObjectMeta(r.Context(), key)
+	meta, _ = s.store.GetObjectMeta(r.Context(), key)
 
 	if restoreReq.NotifySlack {
 		targetSlack := restoreReq.SlackLink
@@ -819,6 +912,11 @@ func (s *Server) handleObjectTierUpdate(w http.ResponseWriter, r *http.Request, 
 func (s *Server) handleRawProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if strings.Contains(r.URL.Path, "..") {
+		http.Error(w, "400 Bad Request: Invalid path", http.StatusBadRequest)
 		return
 	}
 
@@ -920,21 +1018,22 @@ func (s *Server) serveRawDirectoryIndex(w http.ResponseWriter, r *http.Request, 
 		fmt.Fprintf(&buf, "<a href=\"../\">../</a>\n")
 	}
 	for _, e := range entries {
+		escaped := url.PathEscape(strings.TrimPrefix(e.Name, "/"))
 		if e.Type == "DIR" {
-			fmt.Fprintf(&buf, "<a href=\"%s\">%-52s</a> %20s %14s\n",
-				html.EscapeString(e.Name),
-				html.EscapeString(e.Name),
+			fmt.Fprintf(&buf, "<a href=\"./%s/\">%-52s</a> %20s %14s\n",
+				html.EscapeString(escaped),
+				html.EscapeString(e.Name+"/"),
 				e.UpdatedAt.UTC().Format("2006-01-02 15:04:05"),
 				"-")
 		} else {
-			fmt.Fprintf(&buf, "<a href=\"%s\">%-52s</a> %20s %14d  <span class=\"tier\">[%s]</span>  <a href=\"%s.sha256\">[.sha256]</a> <a href=\"%s.sha1\">[.sha1]</a>\n",
-				html.EscapeString(e.Name),
+			fmt.Fprintf(&buf, "<a href=\"./%s\">%-52s</a> %20s %14d  <span class=\"tier\">[%s]</span>  <a href=\"./%s.sha256\">[.sha256]</a> <a href=\"./%s.sha1\">[.sha1]</a>\n",
+				html.EscapeString(escaped),
 				html.EscapeString(e.Name),
 				e.UpdatedAt.UTC().Format("2006-01-02 15:04:05"),
 				e.Size,
 				html.EscapeString(string(e.IntelligentTier)),
-				html.EscapeString(e.Name),
-				html.EscapeString(e.Name))
+				html.EscapeString(escaped),
+				html.EscapeString(escaped))
 		}
 	}
 	fmt.Fprintf(&buf, "</pre>\n<hr>\n<small>s3web HTML Raw Access &bull; Bucket: %s (S3 Intelligent-Tiering)</small>\n</body>\n</html>\n", html.EscapeString(s.cfg.S3Bucket))
@@ -1198,6 +1297,9 @@ func (s *Server) handleAdminLocalUsersByID(w http.ResponseWriter, r *http.Reques
 		count := 0
 		for i := range users {
 			u := users[i]
+			if targetDisabled && (u.Username == p.Username || u.Username == s.cfg.BootstrapAdminUsername) {
+				continue
+			}
 			u.Disabled = targetDisabled
 			if err := s.store.UpsertLocalUser(r.Context(), &u); err == nil {
 				count++
@@ -1270,6 +1372,10 @@ func (s *Server) handleAdminLocalUsersByID(w http.ResponseWriter, r *http.Reques
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
+		if req.Disabled && (username == p.Username || username == s.cfg.BootstrapAdminUsername) {
+			writeJSONError(w, http.StatusBadRequest, "cannot disable currently active admin or bootstrap admin account")
+			return
+		}
 		user, err := s.store.GetLocalUser(r.Context(), username)
 		if err != nil {
 			writeJSONError(w, http.StatusNotFound, "local account not found")
@@ -1288,6 +1394,10 @@ func (s *Server) handleAdminLocalUsersByID(w http.ResponseWriter, r *http.Reques
 	}
 
 	if r.Method == http.MethodDelete {
+		if subPath == p.Username || subPath == s.cfg.BootstrapAdminUsername {
+			writeJSONError(w, http.StatusBadRequest, "cannot delete currently active admin or bootstrap admin account")
+			return
+		}
 		if err := s.store.DeleteLocalUser(r.Context(), subPath); err != nil {
 			writeJSONError(w, http.StatusNotFound, err.Error())
 			return
@@ -1778,6 +1888,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		updated := s.settings
 		s.settingsMu.Unlock()
 
+		_ = s.store.SaveSettings(r.Context(), &updated)
+
 		writeJSON(w, http.StatusOK, updated)
 
 	default:
@@ -1854,6 +1966,16 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Email != nil {
+		newEmail := strings.TrimSpace(*req.Email)
+		if newEmail != p.Email && !p.EffectivePerm.IsAdmin {
+			if grps, err := s.store.GetUserAppGroups(r.Context(), newEmail); err == nil && len(grps) > 0 {
+				writeJSONError(w, http.StatusForbidden, "cannot change email to an address associated with managed app groups")
+				return
+			}
+		}
+	}
+
 	if p.Type == model.PrincipalLocalUser {
 		user, err := s.store.GetLocalUser(r.Context(), p.Username)
 		if err != nil {
@@ -1878,6 +2000,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, "failed to save local user: "+err.Error())
 			return
 		}
+		_ = s.authn.IssueLocalSessionCookie(w, user)
 		if user.DisplayName != "" {
 			p.DisplayName = user.DisplayName
 		} else {
@@ -1898,6 +2021,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		if req.SlackLink != nil {
 			p.SlackLink = strings.TrimSpace(*req.SlackLink)
 		}
+		_ = s.authn.IssueSessionCookieWithSlack(w, p.Email, p.DisplayName, p.SlackLink, p.OIDCGroups)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1909,6 +2033,10 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminAllLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	p := auth.PrincipalFromContext(r.Context())
 	if !p.EffectivePerm.IsAdmin {
 		writeJSONError(w, http.StatusForbidden, "admin permission required")
@@ -1923,6 +2051,9 @@ func (s *Server) handleAdminAllLogs(w http.ResponseWriter, r *http.Request) {
 			limit = parsed
 		}
 	}
+	if limit > 1000 {
+		limit = 1000
+	}
 
 	logs, err := s.store.ListAllAccessLogs(r.Context(), actionFilter, actorFilter, keyFilter, limit)
 	if err != nil {
@@ -1932,6 +2063,27 @@ func (s *Server) handleAdminAllLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"logs": logs,
 	})
+}
+
+func validateWebhookURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return errors.New("invalid webhook URL format")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return errors.New("webhook URL must use https scheme")
+	}
+	hostname := strings.ToLower(u.Hostname())
+	if hostname == "" {
+		return errors.New("webhook URL missing host")
+	}
+	if hostname == "169.254.169.254" || strings.HasPrefix(hostname, "169.254.") || hostname == "metadata.google.internal" {
+		return errors.New("webhook URL target is not permitted")
+	}
+	if u.Scheme == "http" && hostname != "localhost" && hostname != "127.0.0.1" && hostname != "::1" {
+		return errors.New("non-local webhook URL must use https")
+	}
+	return nil
 }
 
 func (s *Server) handleAdminSlackTest(w http.ResponseWriter, r *http.Request) {
@@ -2017,6 +2169,9 @@ func (s *Server) sendSlackWebhook(ctx context.Context, webhookURL, text string) 
 	if webhookURL == "" {
 		return errors.New("webhook url is empty")
 	}
+	if err := validateWebhookURL(webhookURL); err != nil {
+		return err
+	}
 	payload := map[string]interface{}{
 		"text": text,
 	}
@@ -2036,8 +2191,7 @@ func (s *Server) sendSlackWebhook(ctx context.Context, webhookURL, text string) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("webhook error %d: %s", resp.StatusCode, string(b))
+		return fmt.Errorf("remote server returned status %d", resp.StatusCode)
 	}
 	return nil
 }

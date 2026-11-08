@@ -60,6 +60,10 @@ type MetadataStore interface {
 	UpsertServiceAccount(ctx context.Context, sa *model.ServiceAccount) error
 	TouchServiceAccountUsed(ctx context.Context, accountID string, usedAt time.Time) error
 	DeleteServiceAccount(ctx context.Context, accountID string) error
+
+	// Runtime App Settings
+	GetSettings(ctx context.Context) (*model.AppSettings, error)
+	SaveSettings(ctx context.Context, settings *model.AppSettings) error
 }
 
 // LocalStore implements MetadataStore with thread-safe in-memory indexes and JSON disk persistence.
@@ -70,12 +74,13 @@ type LocalStore struct {
 }
 
 type persistedState struct {
-	Objects         map[string]*model.ObjectMeta     `json:"objects"`
+	Objects         map[string]*model.ObjectMeta      `json:"objects"`
 	Logs            map[string][]model.AccessLogEntry `json:"logs"`
-	Grants          map[string]*model.AccessGrant    `json:"grants"`
-	AppGroups       map[string]*model.AppGroup       `json:"app_groups"`
-	LocalUsers      map[string]*model.LocalUser      `json:"local_users"`
-	ServiceAccounts map[string]*model.ServiceAccount `json:"service_accounts"`
+	Grants          map[string]*model.AccessGrant     `json:"grants"`
+	AppGroups       map[string]*model.AppGroup        `json:"app_groups"`
+	LocalUsers      map[string]*model.LocalUser       `json:"local_users"`
+	ServiceAccounts map[string]*model.ServiceAccount  `json:"service_accounts"`
+	Settings        *model.AppSettings                `json:"settings,omitempty"`
 }
 
 // NewLocalStore initializes a LocalStore backed by a JSON file in dataDir.
@@ -427,17 +432,18 @@ func (s *LocalStore) ListObjectAccessLogs(_ context.Context, key string, actionF
 }
 
 func (s *LocalStore) ListAllAccessLogs(_ context.Context, actionFilter string, actorFilter string, keyFilter string, limit int) ([]model.AccessLogEntry, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	actionFilter = strings.ToUpper(strings.TrimSpace(actionFilter))
 	actorFilter = strings.ToLower(strings.TrimSpace(actorFilter))
 	keyFilter = strings.ToLower(strings.TrimSpace(keyFilter))
 	if limit <= 0 {
 		limit = 200
 	}
+	if limit > 1000 {
+		limit = 1000
+	}
 
 	var all []model.AccessLogEntry
+	s.mu.RLock()
 	for _, entries := range s.state.Logs {
 		for _, entry := range entries {
 			if actionFilter != "" && actionFilter != "ALL" && string(entry.Action) != actionFilter {
@@ -454,6 +460,7 @@ func (s *LocalStore) ListAllAccessLogs(_ context.Context, actionFilter string, a
 			all = append(all, entry)
 		}
 	}
+	s.mu.RUnlock()
 
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].Timestamp.After(all[j].Timestamp)
@@ -714,6 +721,30 @@ func (s *LocalStore) DeleteServiceAccount(_ context.Context, accountID string) e
 	defer s.mu.Unlock()
 
 	delete(s.state.ServiceAccounts, accountID)
+	return s.saveLocked()
+}
+
+func (s *LocalStore) GetSettings(_ context.Context) (*model.AppSettings, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.state.Settings == nil {
+		return nil, ErrNotFound
+	}
+	cp := *s.state.Settings
+	return &cp, nil
+}
+
+func (s *LocalStore) SaveSettings(_ context.Context, settings *model.AppSettings) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if settings == nil {
+		s.state.Settings = nil
+	} else {
+		cp := *settings
+		s.state.Settings = &cp
+	}
 	return s.saveLocked()
 }
 

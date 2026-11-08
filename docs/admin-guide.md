@@ -2,13 +2,13 @@
 
 This guide covers operational administration, access governance, security policies, storage settings, and audit monitoring for `s3web`.
 
-For end-user instructions, refer to the [User Guide](file:///Users/jspencer/projects/s3web/docs/user-guide.md). For deployment and infrastructure setup, refer to the [Installation Guide](file:///Users/jspencer/projects/s3web/docs/installation.md).
+For end-user instructions, refer to the [User Guide](user-guide.md). For deployment and infrastructure setup, refer to the [Installation Guide](installation.md).
 
 ---
 
 ## 1. Overview of Administrative Capabilities
 
-`s3web` implements a decoupled, in-app role-based access control (RBAC) engine that operates independently of underlying cloud provider IAM policies. All administrative features are accessible through the web UI under the **Admin** panel (visible exclusively to principals with `ADMIN` privileges) and via programmatic endpoints detailed in the embedded [Swagger API Explorer](file:///Users/jspencer/projects/s3web/internal/ui/static/swagger/index.html) (`/swagger/`).
+`s3web` implements a decoupled, in-app role-based access control (RBAC) engine that operates independently of underlying cloud provider IAM policies. All administrative features are accessible through the web UI under the **Admin** panel (visible exclusively to principals with `ADMIN` privileges) and via programmatic endpoints detailed in the embedded [Swagger API Explorer](/swagger/) (`/swagger/`).
 
 Key administrative responsibilities include:
 

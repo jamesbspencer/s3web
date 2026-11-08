@@ -1209,6 +1209,16 @@ func TestAdminAllLogsAndSlackFeatures(t *testing.T) {
 	}
 	resp.Body.Close()
 
+	// Set archive.iso tier to Archive Access (AA) so restore is required
+	tierReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/objects/archive.iso/tier", strings.NewReader(`{"intelligent_tier":"AA"}`))
+	tierReq.Header.Set("Content-Type", "application/json")
+	tierReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	tierResp, err := client.Do(tierReq)
+	if err != nil {
+		t.Fatalf("set tier: %v", err)
+	}
+	tierResp.Body.Close()
+
 	restorePayload, _ := json.Marshal(map[string]interface{}{
 		"notify_slack": true,
 		"slack_link":   "<@U12345678>",
@@ -1377,6 +1387,271 @@ func TestSwaggerAndOpenAPISpecEndpoints(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusMovedPermanently {
 		t.Fatalf("expected 301 Moved Permanently from /swagger, got %d", resp.StatusCode)
+	}
+}
+
+func TestAnonymousAccessSearchAndPermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := config.Load()
+	cfg.LocalDataDir = tmpDir
+	cfg.BackendMode = "local"
+	cfg.AnonymousAccessEnabled = true
+
+	metaStore, err := store.NewLocalStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewLocalStore: %v", err)
+	}
+	objStorage, err := storage.NewLocalFSStorage(tmpDir)
+	if err != nil {
+		t.Fatalf("NewLocalFSStorage: %v", err)
+	}
+	srv, err := server.New(cfg, metaStore, objStorage)
+	if err != nil {
+		t.Fatalf("server.New: %v", err)
+	}
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	// 1. Unauthenticated search returns 200 OK
+	resp, err := client.Get(ts.URL + "/api/v1/search?q=test")
+	if err != nil {
+		t.Fatalf("GET /api/v1/search: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for anonymous search, got %d", resp.StatusCode)
+	}
+
+	// 2. Unauthenticated browse returns 200 OK
+	resp, err = client.Get(ts.URL + "/api/v1/browse")
+	if err != nil {
+		t.Fatalf("GET /api/v1/browse: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for anonymous browse, got %d", resp.StatusCode)
+	}
+
+	// 3. Unauthenticated restore attempt is rejected with 401 Unauthorized
+	restoreReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/objects/isos/test.iso/restore", nil)
+	resp, err = client.Do(restoreReq)
+	if err != nil {
+		t.Fatalf("POST restore: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for anonymous restore attempt, got %d", resp.StatusCode)
+	}
+}
+
+func TestPathTraversalRejections(t *testing.T) {
+	srv, cfg := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	// 1. CleanObjectKey unit validation against directory traversal and invalid suffixes
+	traversalKeys := []string{
+		"../secret.iso",
+		"prefix/../secret.iso",
+		"folder/../../passwords.txt",
+		"..",
+		"trailing.iso/",
+		"nested/dir/../",
+	}
+	for _, k := range traversalKeys {
+		if _, err := server.CleanObjectKey(k); err == nil {
+			t.Fatalf("expected CleanObjectKey to reject traversal key %q, got nil", k)
+		}
+	}
+
+	validKeys := []string{
+		"isos/ubuntu-24.04.iso",
+		"backups/db-2026-11-08.tar.gz",
+	}
+	for _, k := range validKeys {
+		cleaned, err := server.CleanObjectKey(k)
+		if err != nil || cleaned != k {
+			t.Fatalf("expected CleanObjectKey to accept %q, got %q (err=%v)", k, cleaned, err)
+		}
+	}
+
+	// 2. HTTP Trailing slash rejection on upload
+	slashReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/invalid.iso/", strings.NewReader("bad"))
+	slashReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp, err := client.Do(slashReq)
+	if err != nil {
+		t.Fatalf("PUT trailing slash: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for trailing slash in object key, got %d", resp.StatusCode)
+	}
+
+	// 3. HTTP Path traversal rejection on /raw/ when path contains '..'
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/raw/prefix/../secret.iso", nil)
+	req.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for path traversal in /raw, got %d", rec.Code)
+	}
+}
+
+func TestSlackWebhookSecurityAndSanitization(t *testing.T) {
+	srv, cfg := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	tests := []struct {
+		name       string
+		webhookURL string
+	}{
+		{"cloud metadata ip", "http://169.254.169.254/latest/meta-data/"},
+		{"insecure http non-local", "http://example.com/webhook"},
+		{"unsupported ftp scheme", "ftp://example.com/webhook"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reqBody := `{"webhook_url":"` + tc.webhookURL + `"}`
+			req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/slack/test", strings.NewReader(reqBody))
+			req.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("POST slack test: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("expected 400 Bad Request for disallowed webhook URL %q, got %d", tc.webhookURL, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestAdminSelfLockoutPrevention(t *testing.T) {
+	srv, cfg := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	// 1. Bulk disable-all does not disable the admin account
+	disableAllReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/local-users/disable-all", strings.NewReader(`{"disabled":true}`))
+	disableAllReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	disableAllReq.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(disableAllReq)
+	if err != nil {
+		t.Fatalf("POST disable-all: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from disable-all, got %d", resp.StatusCode)
+	}
+
+	// Verify admin can still authenticate after disable-all
+	getUsersReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/local-users", nil)
+	getUsersReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp, err = client.Do(getUsersReq)
+	if err != nil {
+		t.Fatalf("GET local users: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected admin to remain enabled after disable-all, got %d", resp.StatusCode)
+	}
+
+	// 2. Admin cannot disable own status
+	statusReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/admin/local-users/admin/status", strings.NewReader(`{"disabled":true}`))
+	statusReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	statusReq.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(statusReq)
+	if err != nil {
+		t.Fatalf("PUT admin status: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request when admin attempts to disable own account, got %d", resp.StatusCode)
+	}
+
+	// 3. Admin cannot delete own account
+	delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/admin/local-users/admin", nil)
+	delReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp, err = client.Do(delReq)
+	if err != nil {
+		t.Fatalf("DELETE admin: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request when admin attempts to delete own account, got %d", resp.StatusCode)
+	}
+}
+
+func TestSettingsPersistenceAcrossRestarts(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := config.Load()
+	cfg.LocalDataDir = tmpDir
+	cfg.BackendMode = "local"
+	cfg.BootstrapAdminPassword = "admin-secret-password"
+
+	metaStore, err := store.NewLocalStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewLocalStore: %v", err)
+	}
+	objStorage, err := storage.NewLocalFSStorage(tmpDir)
+	if err != nil {
+		t.Fatalf("NewLocalFSStorage: %v", err)
+	}
+
+	// First server instance updates repository title in settings
+	srv1, err := server.New(cfg, metaStore, objStorage)
+	if err != nil {
+		t.Fatalf("server.New 1: %v", err)
+	}
+	ts1 := httptest.NewServer(srv1)
+	client := ts1.Client()
+
+	updateBody := `{"repository_title":"Custom Persisted Archive Title"}`
+	putReq, _ := http.NewRequest(http.MethodPut, ts1.URL+"/api/v1/settings", strings.NewReader(updateBody))
+	putReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	putReq.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(putReq)
+	if err != nil {
+		t.Fatalf("PUT /api/v1/settings: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK updating settings, got %d", resp.StatusCode)
+	}
+	ts1.Close()
+
+	// Second server instance uses same persistent store
+	srv2, err := server.New(cfg, metaStore, objStorage)
+	if err != nil {
+		t.Fatalf("server.New 2: %v", err)
+	}
+	ts2 := httptest.NewServer(srv2)
+	defer ts2.Close()
+
+	getReq, _ := http.NewRequest(http.MethodGet, ts2.URL+"/api/v1/settings", nil)
+	getReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	resp2, err := ts2.Client().Do(getReq)
+	if err != nil {
+		t.Fatalf("GET /api/v1/settings: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK reading settings from reloaded server, got %d", resp2.StatusCode)
+	}
+	var loaded model.AppSettings
+	if err := json.NewDecoder(resp2.Body).Decode(&loaded); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	if loaded.RepositoryTitle != "Custom Persisted Archive Title" {
+		t.Fatalf("expected persisted title %q, got %q", "Custom Persisted Archive Title", loaded.RepositoryTitle)
 	}
 }
 

@@ -89,8 +89,8 @@ When modifying or adding features, preserve these invariants:
 6. **Authentication Methods**:
    - Web UI: OIDC SSO (Google Workspace, Okta, Keycloak) or Local User Accounts (PBKDF2-HMAC-SHA256 salted hashes).
    - `/raw/` HTML Raw Access: Bearer tokens (`Authorization: Bearer <id>:s3w_<token>`) or HTTP Basic Auth.
-7. **Strict Anonymity Rule**:
-   - Anonymous access is strictly prohibited across all endpoints (both `/api/v1/*` and `/raw/*`).
+7. **Strict Anonymity Rule (Configurable)**:
+   - Anonymous access is disabled by default across all endpoints. When enabled via `S3WEB_ANONYMOUS_ACCESS=true` or runtime Settings, anonymous callers receive read-only permissions (`CanRead: true`, `CanUpload: false`, `CanDelete: false`, `IsAdmin: false`).
 
 ---
 

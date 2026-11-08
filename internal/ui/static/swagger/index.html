@@ -541,7 +541,7 @@
 
             ${hasBody ? `
               <div class="op-section-title">Request Body (application/json)</div>
-              <textarea class="param-input" id="${opId}-reqbody" placeholder="JSON payload...">${getSampleBody(op.requestBody)}</textarea>
+              <textarea class="param-input" id="${opId}-reqbody" placeholder="JSON payload...">${escapeHtml(getSampleBody(op.requestBody))}</textarea>
             ` : ''}
 
             <div class="op-section-title">Responses</div>

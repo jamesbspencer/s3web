@@ -3,9 +3,9 @@
 This guide describes how to build, configure, deploy, and operate `s3web` across local workstations, on-premise Linux virtual machines, Docker containers, and high-availability AWS ECS Fargate environments.
 
 For operational administration and user guides, refer to:
-- [Administrator Guide](file:///Users/jspencer/projects/s3web/docs/admin-guide.md)
-- [User Guide](file:///Users/jspencer/projects/s3web/docs/user-guide.md)
-- [S3 Authentication & Security Architecture](file:///Users/jspencer/projects/s3web/docs/s3-authentication.md)
+- [Administrator Guide](admin-guide.md)
+- [User Guide](user-guide.md)
+- [S3 Authentication & Security Architecture](s3-authentication.md)
 
 ---
 
@@ -131,8 +131,7 @@ For bare-metal Linux servers or virtual machines running Ubuntu, Debian, RHEL, o
 
 3. Create the environment configuration file `/etc/s3web/s3web.env`:
    ```ini
-   S3WEB_PORT=8080
-   S3WEB_LISTEN_ADDR=0.0.0.0
+   S3WEB_LISTEN_ADDR=:8080
    S3WEB_LOCAL_DATA_DIR=/var/lib/s3web
    S3WEB_S3_BUCKET=my-archive-bucket
    S3WEB_AWS_REGION=us-east-1
@@ -265,8 +264,7 @@ The `terraform/` directory provides infrastructure-as-code for deploying `s3web`
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `S3WEB_PORT` | `8080` | TCP port on which the HTTP server listens. |
-| `S3WEB_LISTEN_ADDR` | `0.0.0.0` | IP address binding interface. |
+| `S3WEB_LISTEN_ADDR` | `:8080` | Host interface and TCP port on which the HTTP server listens. |
 | `S3WEB_LOCAL_DATA_DIR` | `./data` (or `~/.s3web`) | Path to local persistent store and bootstrap credential file. |
 | `S3WEB_S3_BUCKET` | *(required)* | Name of the Amazon S3 bucket storing large file archives. |
 | `S3WEB_AWS_REGION` | `us-east-1` | AWS region where the S3 bucket and DynamoDB table reside. |

@@ -15,6 +15,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -155,6 +156,10 @@ func VerifySecret(secret, encodedHash string) bool {
 	if len(parts) != 4 || parts[0] != "pbkdf2" {
 		return false
 	}
+	iters, err := strconv.Atoi(parts[1])
+	if err != nil || iters < 1000 {
+		return false
+	}
 	salt, err := hex.DecodeString(parts[2])
 	if err != nil {
 		return false
@@ -163,7 +168,7 @@ func VerifySecret(secret, encodedHash string) bool {
 	if err != nil {
 		return false
 	}
-	actual := deriveKey([]byte(secret), salt, 100_000)
+	actual := deriveKey([]byte(secret), salt, iters)
 	return hmac.Equal(actual, expected)
 }
 
@@ -250,6 +255,7 @@ type sessionPayload struct {
 	ID            string              `json:"id"`
 	Email         string              `json:"email"`
 	DisplayName   string              `json:"name"`
+	SlackLink     string              `json:"slack_link,omitempty"`
 	OIDCGroups    []string            `json:"groups"`
 	IssuedAt      int64               `json:"iat"`
 	ExpiresAt     int64               `json:"exp"`
@@ -269,6 +275,7 @@ func (a *Authenticator) IssueLocalSessionCookie(w http.ResponseWriter, user *mod
 		ID:            user.Username,
 		Email:         user.Email,
 		DisplayName:   user.DisplayName,
+		SlackLink:     user.SlackLink,
 		OIDCGroups:    groups,
 		IssuedAt:      now.Unix(),
 		ExpiresAt:     now.Add(12 * time.Hour).Unix(),
@@ -278,12 +285,18 @@ func (a *Authenticator) IssueLocalSessionCookie(w http.ResponseWriter, user *mod
 
 // IssueSessionCookie signs and sets an HttpOnly session cookie for an SSO user.
 func (a *Authenticator) IssueSessionCookie(w http.ResponseWriter, email, displayName string, oidcGroups []string) error {
+	return a.IssueSessionCookieWithSlack(w, email, displayName, "", oidcGroups)
+}
+
+// IssueSessionCookieWithSlack signs and sets an HttpOnly session cookie for an SSO user with Slack handle.
+func (a *Authenticator) IssueSessionCookieWithSlack(w http.ResponseWriter, email, displayName, slackLink string, oidcGroups []string) error {
 	now := time.Now()
 	payload := sessionPayload{
 		PrincipalType: model.PrincipalSSOUser,
 		ID:            email,
 		Email:         email,
 		DisplayName:   displayName,
+		SlackLink:     slackLink,
 		OIDCGroups:    oidcGroups,
 		IssuedAt:      now.Unix(),
 		ExpiresAt:     now.Add(12 * time.Hour).Unix(),
@@ -393,13 +406,14 @@ func (a *Authenticator) AuthenticateRequest(r *http.Request) (*model.Principal, 
 
 	// 4. Check if Anonymous Access is enabled
 	if a.IsAnonymousAccessEnabled() {
-		return &model.Principal{
+		p := &model.Principal{
 			Type:        model.PrincipalAnonymous,
 			ID:          "anonymous",
 			Username:    "anonymous",
 			DisplayName: "Anonymous Guest",
 			OIDCGroups:  []string{"anonymous"},
-		}, nil
+		}
+		return a.enrichPrincipal(ctx, p)
 	}
 
 	// Anonymous access is disabled.
@@ -475,6 +489,7 @@ func (a *Authenticator) authenticateSessionCookie(ctx context.Context, cookieVal
 		ID:          payload.Email,
 		Email:       payload.Email,
 		DisplayName: payload.DisplayName,
+		SlackLink:   payload.SlackLink,
 		OIDCGroups:  payload.OIDCGroups,
 	}
 	return a.enrichPrincipal(ctx, p)
