@@ -102,7 +102,7 @@ func New(cfg *config.Config, st store.MetadataStore, objStore storage.ObjectStor
 			},
 			DynamoDBTable:            cfg.DynamoDBTable,
 			SQSQueueURL:              cfg.SQSQueueURL,
-			BootstrapNexusAccountID:  cfg.BootstrapNexusAccountID,
+			BootstrapRawAccountID:    cfg.BootstrapRawAccountID,
 			UpdatedBy:                "system",
 			UpdatedAt:                time.Now().UTC(),
 		},
@@ -1153,6 +1153,9 @@ func (s *Server) handleAdminGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		grant.UpdatedBy = p.ID
+		if grant.ID == "" {
+			grant.ID = fmt.Sprintf("grant_%d", time.Now().UnixNano())
+		}
 		if err := s.store.UpsertAccessGrant(r.Context(), &grant); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -1169,7 +1172,11 @@ func (s *Server) handleAdminGrantsByID(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, "admin permission required")
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/grants/")
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/admin/grants/"), "/")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "grant id is required")
+		return
+	}
 	if r.Method != http.MethodDelete {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -1222,7 +1229,11 @@ func (s *Server) handleAdminGroupsByName(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusForbidden, "admin permission required")
 		return
 	}
-	name := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/groups/")
+	name := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/admin/groups/"), "/")
+	if name == "" {
+		writeJSONError(w, http.StatusBadRequest, "group name is required")
+		return
+	}
 	if r.Method != http.MethodDelete {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -1265,6 +1276,10 @@ func (s *Server) handleAdminServiceAccounts(w http.ResponseWriter, r *http.Reque
 		req.AccountID = strings.TrimSpace(req.AccountID)
 		if req.AccountID == "" {
 			writeJSONError(w, http.StatusBadRequest, "account_id is required")
+			return
+		}
+		if existing, err := s.store.GetServiceAccount(r.Context(), req.AccountID); err == nil && existing != nil {
+			writeJSONError(w, http.StatusConflict, fmt.Sprintf("service account %q already exists", req.AccountID))
 			return
 		}
 		if req.Name == "" {
@@ -1326,7 +1341,11 @@ func (s *Server) handleAdminServiceAccountsByID(w http.ResponseWriter, r *http.R
 		writeJSONError(w, http.StatusForbidden, "admin permission required")
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/service-accounts/")
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/admin/service-accounts/"), "/")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "service account id is required")
+		return
+	}
 	if r.Method != http.MethodDelete {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return

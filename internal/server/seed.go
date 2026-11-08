@@ -185,20 +185,20 @@ func (s *Server) seedBootstrapData(ctx context.Context) error {
 		})
 
 		// 6. Default Service Account -> Read-Only across entire bucket
-		saHash, err := auth.HashSecret(s.cfg.BootstrapNexusAccountKey)
+		saHash, err := auth.HashSecret(s.cfg.BootstrapRawAccountKey)
 		if err == nil {
 			_ = s.store.UpsertServiceAccount(ctx, &model.ServiceAccount{
-				AccountID:   s.cfg.BootstrapNexusAccountID,
+				AccountID:   s.cfg.BootstrapRawAccountID,
 				Name:        "HTML Raw Access Service Account",
 				Description: "Used for HTML Raw Access and CLI automation over Private VPC",
 				SecretHash:  saHash,
 				CreatedBy:   "system",
 			})
 			_ = s.store.UpsertAccessGrant(ctx, &model.AccessGrant{
-				ID:          "grant-sa-" + s.cfg.BootstrapNexusAccountID,
+				ID:          "grant-sa-" + s.cfg.BootstrapRawAccountID,
 				Description: "HTML Raw Access Read-Only Grant",
 				SubjectType: model.SubjectServiceAccount,
-				SubjectID:   s.cfg.BootstrapNexusAccountID,
+				SubjectID:   s.cfg.BootstrapRawAccountID,
 				Prefixes:    []string{"*"},
 				CanRead:     true,
 				CanUpload:   false,
@@ -310,7 +310,7 @@ func (s *Server) seedBootstrapData(ctx context.Context) error {
 				Timestamp:     now.Add(-item.accessedAgo),
 				Action:        model.ActionDownload,
 				PrincipalType: model.PrincipalServiceAccount,
-				PrincipalID:   s.cfg.BootstrapNexusAccountID,
+				PrincipalID:   s.cfg.BootstrapRawAccountID,
 				ClientIP:      "10.24.4.19",
 				UserAgent:     "curl/8.7.1 (HTML-Raw-Access)",
 				BytesSent:     putRes.Size,

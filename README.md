@@ -1,6 +1,6 @@
 # `s3web` — Private S3 Artifact Browser & HTML Raw Access (Go)
 
-`s3web` is a single-binary Go web interface and HTML Raw Access server for Amazon S3 buckets storing ISOs and compressed archives. See [DESIGN.md](DESIGN.md) for the complete system architecture.
+`s3web` is a single-binary Go web interface and HTML Raw Access server for Amazon S3 buckets storing ISOs and compressed archives. See [DESIGN.md](DESIGN.md) for the system architecture, [docs/s3-authentication.md](docs/s3-authentication.md) for S3 authentication and data-plane security, and [AGENTS.md](AGENTS.md) for AI agent guidelines and commands.
 
 ## Key Capabilities
 - **Private-Only VPC (VPN Access Only)**: Zero external CDN dependencies (`//go:embed` static UI), designed for private subnets behind an Internal ALB with S3 & DynamoDB VPC Gateway Endpoints.

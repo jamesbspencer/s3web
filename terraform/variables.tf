@@ -212,7 +212,7 @@ variable "bootstrap_admin_oidc_group" {
   default     = "platform-admins"
 }
 
-variable "bootstrap_nexus_account_id" {
+variable "bootstrap_raw_account_id" {
   description = "Default Service Account ID created for HTML Raw Access."
   type        = string
   default     = "svc-raw-access"

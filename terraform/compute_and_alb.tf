@@ -19,7 +19,7 @@ resource "aws_ecr_repository" "s3web" {
   }
 }
 
-# --- AWS Secrets Manager (Session Signing Key, Default Admin Password, OIDC Secret & Nexus Secret) ---
+# --- AWS Secrets Manager (Session Signing Key, Default Admin Password, OIDC Secret & Service Account Secret) ---
 
 resource "random_password" "session_secret" {
   length  = 48
@@ -38,7 +38,7 @@ resource "random_password" "demo_password" {
   override_special = "!@#%^&*-_=+"
 }
 
-resource "random_password" "nexus_service_account_secret" {
+resource "random_password" "raw_service_account_secret" {
   length  = 36
   special = false
 }
@@ -56,7 +56,7 @@ resource "aws_secretsmanager_secret_version" "app_secrets" {
     S3WEB_BOOTSTRAP_ADMIN_PASSWORD = random_password.admin_password.result
     S3WEB_BOOTSTRAP_DEMO_PASSWORD  = random_password.demo_password.result
     S3WEB_OIDC_CLIENT_SECRET       = "replace-with-oidc-client-secret-in-secrets-manager"
-    S3WEB_BOOTSTRAP_NEXUS_SECRET   = "s3w_${random_password.nexus_service_account_secret.result}"
+    S3WEB_BOOTSTRAP_RAW_SECRET     = "s3w_${random_password.raw_service_account_secret.result}"
   })
 
   lifecycle {
@@ -412,7 +412,7 @@ resource "aws_ecs_task_definition" "s3web" {
         { name = "S3WEB_GITHUB_PINNED_JWKS_JSON", value = var.github_pinned_jwks_json },
         { name = "S3WEB_BOOTSTRAP_ADMIN_EMAIL", value = var.bootstrap_admin_email },
         { name = "S3WEB_BOOTSTRAP_ADMIN_GROUP", value = var.bootstrap_admin_oidc_group },
-        { name = "S3WEB_BOOTSTRAP_NEXUS_ID", value = var.bootstrap_nexus_account_id },
+        { name = "S3WEB_BOOTSTRAP_RAW_ID", value = var.bootstrap_raw_account_id },
         { name = "S3WEB_LOG_RETENTION_DAYS", value = tostring(var.access_log_retention_days) }
       ]
       secrets = [
@@ -433,8 +433,8 @@ resource "aws_ecs_task_definition" "s3web" {
           valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:S3WEB_OIDC_CLIENT_SECRET::"
         },
         {
-          name      = "S3WEB_BOOTSTRAP_NEXUS_SECRET"
-          valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:S3WEB_BOOTSTRAP_NEXUS_SECRET::"
+          name      = "S3WEB_BOOTSTRAP_RAW_SECRET"
+          valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:S3WEB_BOOTSTRAP_RAW_SECRET::"
         }
       ]
       logConfiguration = {

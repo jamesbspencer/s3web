@@ -362,8 +362,8 @@ Why application-level logging instead of S3 Server Access Logs?
   |  2026-11-05 14:10:44  | my-org/iso-builder@main     | GH_ACTION | UPLOAD   | 10.24.8.41 | 2.56 GB (201)|
   +--------------------------------------------------------------------------------------------------------+
 
-  +-- In-App Permissions & Access Control View (/admin/permissions) -------------------------------+
-  |  [Tab: Access Grants]  [Tab: App Groups]  [Tab: GitHub OIDC]  [Tab: Service Accounts]  [+ New] |
+  +-- In-App Settings & Permissions Console ------------------------------------------------------+
+  | [Buckets & Tree] [Local & Service Accounts] [Access Grants & Groups] [SSO] [JWT Issuers] [Storage] |
   |------------------------------------------------------------------------------------------------|
   |  Subject                                | Type       | Allowed Prefixes | Read | Upld | Del |Ad|
   |-----------------------------------------+------------+------------------+------+------+-----+--|

@@ -49,8 +49,8 @@ type Config struct {
 	BootstrapDemoUsername    string
 	BootstrapDemoEmail       string
 	BootstrapDemoPassword    string
-	BootstrapNexusAccountID  string
-	BootstrapNexusAccountKey string
+	BootstrapRawAccountID    string
+	BootstrapRawAccountKey   string
 
 	// Log Retention
 	AccessLogRetentionDays int
@@ -89,8 +89,8 @@ func Load() *Config {
 		BootstrapDemoUsername:    getEnv("S3WEB_BOOTSTRAP_DEMO_USERNAME", "demo"),
 		BootstrapDemoEmail:       getEnv("S3WEB_BOOTSTRAP_DEMO_EMAIL", "demo@example.com"),
 		BootstrapDemoPassword:    getEnv("S3WEB_BOOTSTRAP_DEMO_PASSWORD", ""),
-		BootstrapNexusAccountID:  getEnv("S3WEB_BOOTSTRAP_RAW_ID", getEnv("S3WEB_BOOTSTRAP_NEXUS_ID", "svc-raw-access")),
-		BootstrapNexusAccountKey: getEnv("S3WEB_BOOTSTRAP_RAW_SECRET", getEnv("S3WEB_BOOTSTRAP_NEXUS_SECRET", randomFallbackSecret(24, "s3w_"))),
+		BootstrapRawAccountID:    getEnv("S3WEB_BOOTSTRAP_RAW_ID", "svc-raw-access"),
+		BootstrapRawAccountKey:   getEnv("S3WEB_BOOTSTRAP_RAW_SECRET", randomFallbackSecret(24, "s3w_")),
 		AccessLogRetentionDays:   getEnvInt("S3WEB_LOG_RETENTION_DAYS", 90),
 		WorkerPollInterval:       time.Duration(getEnvInt("S3WEB_WORKER_POLL_SECONDS", 15)) * time.Second,
 	}

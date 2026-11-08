@@ -87,7 +87,7 @@ output "bootstrap_demo_password" {
 
 output "bootstrap_service_account_secret" {
   description = "Generated default HTML Raw Access service account secret."
-  value       = "s3w_${random_password.nexus_service_account_secret.result}"
+  value       = "s3w_${random_password.raw_service_account_secret.result}"
   sensitive   = true
 }
 

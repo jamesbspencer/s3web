@@ -312,7 +312,7 @@ type AppSettings struct {
 	Buckets                  []BucketMount       `json:"buckets"`
 	DynamoDBTable            string              `json:"dynamodb_table"`
 	SQSQueueURL              string              `json:"sqs_queue_url"`
-	BootstrapNexusAccountID  string              `json:"bootstrap_nexus_account_id"`
+	BootstrapRawAccountID    string              `json:"bootstrap_raw_account_id"`
 	UpdatedBy                string              `json:"updated_by,omitempty"`
 	UpdatedAt                time.Time           `json:"updated_at,omitempty"`
 }

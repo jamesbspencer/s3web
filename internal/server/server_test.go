@@ -22,8 +22,8 @@ func setupTestServer(t *testing.T) (*server.Server, *config.Config) {
 	cfg := config.Load()
 	cfg.LocalDataDir = tmpDir
 	cfg.BackendMode = "local"
-	cfg.BootstrapNexusAccountID = "svc-raw-access"
-	cfg.BootstrapNexusAccountKey = "raw-secret-123"
+	cfg.BootstrapRawAccountID = "svc-raw-access"
+	cfg.BootstrapRawAccountKey = "raw-secret-123"
 	cfg.BootstrapAdminEmail = "admin@example.com"
 	cfg.BootstrapAdminPassword = "" // Ensure random password is generated on install
 	cfg.BootstrapDemoPassword = ""  // Ensure random demo password is generated on install
@@ -209,7 +209,7 @@ func TestHTMLRawAccessAndVirtualChecksums(t *testing.T) {
 
 	// 1. Unauthenticated request with Basic Auth wrong password should return 401
 	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/raw/linux/ubuntu/24.04/ubuntu-24.04.1-live-server-amd64.iso", nil)
-	req.SetBasicAuth(cfg.BootstrapNexusAccountID, "wrong-secret")
+	req.SetBasicAuth(cfg.BootstrapRawAccountID, "wrong-secret")
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("HEAD request: %v", err)
@@ -221,7 +221,7 @@ func TestHTMLRawAccessAndVirtualChecksums(t *testing.T) {
 
 	// 2. Valid HTML Raw Access HEAD request returns ETag, X-Checksum-Sha256, X-Checksum-Sha1, and X-Amz-Intelligent-Tier
 	req, _ = http.NewRequest(http.MethodHead, ts.URL+"/raw/linux/ubuntu/24.04/ubuntu-24.04.1-live-server-amd64.iso", nil)
-	req.SetBasicAuth(cfg.BootstrapNexusAccountID, cfg.BootstrapNexusAccountKey)
+	req.SetBasicAuth(cfg.BootstrapRawAccountID, cfg.BootstrapRawAccountKey)
 	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatalf("HEAD request: %v", err)
@@ -242,7 +242,7 @@ func TestHTMLRawAccessAndVirtualChecksums(t *testing.T) {
 
 	// 3. Virtual .sha256 sidecar endpoint matches X-Checksum-Sha256
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/raw/linux/ubuntu/24.04/ubuntu-24.04.1-live-server-amd64.iso.sha256", nil)
-	req.SetBasicAuth(cfg.BootstrapNexusAccountID, cfg.BootstrapNexusAccountKey)
+	req.SetBasicAuth(cfg.BootstrapRawAccountID, cfg.BootstrapRawAccountKey)
 	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatalf("GET .sha256: %v", err)
@@ -255,7 +255,7 @@ func TestHTMLRawAccessAndVirtualChecksums(t *testing.T) {
 
 	// 4. HTML Directory autoindex on /raw/linux/ubuntu/24.04/
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/raw/linux/ubuntu/24.04/", nil)
-	req.SetBasicAuth(cfg.BootstrapNexusAccountID, cfg.BootstrapNexusAccountKey)
+	req.SetBasicAuth(cfg.BootstrapRawAccountID, cfg.BootstrapRawAccountKey)
 	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatalf("GET autoindex: %v", err)
@@ -269,7 +269,7 @@ func TestHTMLRawAccessAndVirtualChecksums(t *testing.T) {
 	// 5. Archived object (AA) returns 409 Conflict before restore, and 200 OK after POST .../restore
 	archKey := "isos/legacy/centos-7.9-2009-x86_64-minimal.iso"
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/raw/"+archKey, nil)
-	req.SetBasicAuth(cfg.BootstrapNexusAccountID, cfg.BootstrapNexusAccountKey)
+	req.SetBasicAuth(cfg.BootstrapRawAccountID, cfg.BootstrapRawAccountKey)
 	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatalf("GET archived ISO: %v", err)
@@ -280,7 +280,7 @@ func TestHTMLRawAccessAndVirtualChecksums(t *testing.T) {
 	}
 
 	restoreReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/objects/"+archKey+"/restore", nil)
-	restoreReq.SetBasicAuth(cfg.BootstrapNexusAccountID, cfg.BootstrapNexusAccountKey)
+	restoreReq.SetBasicAuth(cfg.BootstrapRawAccountID, cfg.BootstrapRawAccountKey)
 	restoreResp, err := client.Do(restoreReq)
 	if err != nil {
 		t.Fatalf("POST restore: %v", err)
@@ -291,7 +291,7 @@ func TestHTMLRawAccessAndVirtualChecksums(t *testing.T) {
 	}
 
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/raw/"+archKey, nil)
-	req.SetBasicAuth(cfg.BootstrapNexusAccountID, cfg.BootstrapNexusAccountKey)
+	req.SetBasicAuth(cfg.BootstrapRawAccountID, cfg.BootstrapRawAccountKey)
 	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatalf("GET restored ISO: %v", err)
@@ -370,6 +370,236 @@ func TestGitHubActionsOIDCJWTUploadAndAccessLogs(t *testing.T) {
 	logResp.Body.Close()
 	if len(logData.Logs) == 0 || logData.Logs[0].PrincipalType != model.PrincipalGitHubWorkflow {
 		t.Fatalf("expected GITHUB_WORKFLOW upload log entry, got %+v", logData.Logs)
+	}
+}
+
+func TestServiceAccountsLifecycleAndAuth(t *testing.T) {
+	srv, cfg := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	// 1. Non-admin user (demo) is rejected with 403 Forbidden when managing service accounts
+	demoReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/service-accounts", nil)
+	demoReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	demoResp, err := client.Do(demoReq)
+	if err != nil {
+		t.Fatalf("demo GET service-accounts: %v", err)
+	}
+	demoResp.Body.Close()
+	if demoResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for non-admin, got %d", demoResp.StatusCode)
+	}
+
+	// 2. Admin creates a new service account with scoped upload permissions
+	createPayload := map[string]interface{}{
+		"account_id":  "svc-build-agent",
+		"name":        "CI Build Agent",
+		"description": "Automated build uploader",
+		"prefixes":    []string{"builds/*"},
+		"can_read":    true,
+		"can_upload":  true,
+		"can_delete":  false,
+	}
+	body, _ := json.Marshal(createPayload)
+	createReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/service-accounts", bytes.NewReader(body))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	createResp, err := client.Do(createReq)
+	if err != nil {
+		t.Fatalf("admin POST service-accounts: %v", err)
+	}
+	var created struct {
+		ServiceAccount model.ServiceAccount `json:"service_account"`
+		Secret         string               `json:"secret"`
+		BearerHeader   string               `json:"bearer_header"`
+	}
+	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create service-account: %v", err)
+	}
+	createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d", createResp.StatusCode)
+	}
+	if created.Secret == "" || !strings.HasPrefix(created.Secret, "s3w_") {
+		t.Fatalf("expected s3w_ prefixed secret, got %q", created.Secret)
+	}
+
+	// 3. Attempting to create duplicate service account returns 409 Conflict
+	dupReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/service-accounts", bytes.NewReader(body))
+	dupReq.Header.Set("Content-Type", "application/json")
+	dupReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	dupResp, err := client.Do(dupReq)
+	if err != nil {
+		t.Fatalf("duplicate POST service-accounts: %v", err)
+	}
+	dupResp.Body.Close()
+	if dupResp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict for duplicate service account, got %d", dupResp.StatusCode)
+	}
+
+	// 4. Authenticate using HTTP Basic Auth (account_id : secret)
+	meBasicReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/me", nil)
+	meBasicReq.SetBasicAuth("svc-build-agent", created.Secret)
+	meBasicResp, err := client.Do(meBasicReq)
+	if err != nil {
+		t.Fatalf("GET /api/v1/me with service account Basic Auth: %v", err)
+	}
+	var meBasic struct {
+		Principal model.Principal `json:"principal"`
+	}
+	_ = json.NewDecoder(meBasicResp.Body).Decode(&meBasic)
+	meBasicResp.Body.Close()
+	if meBasicResp.StatusCode != http.StatusOK || meBasic.Principal.Type != model.PrincipalServiceAccount {
+		t.Fatalf("expected 200 OK and SERVICE_ACCOUNT, got status=%d, principal=%+v", meBasicResp.StatusCode, meBasic.Principal)
+	}
+
+	// 5. Authenticate using HTTP Bearer Token ("Authorization: Bearer <account_id>:<secret>")
+	uploadReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/objects/builds/artifact-v1.tar.gz", strings.NewReader("sample build content"))
+	uploadReq.Header.Set("Authorization", "Bearer svc-build-agent:"+created.Secret)
+	uploadResp, err := client.Do(uploadReq)
+	if err != nil {
+		t.Fatalf("PUT object with Bearer token: %v", err)
+	}
+	uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for authorized upload, got %d", uploadResp.StatusCode)
+	}
+
+	// 6. Delete without delete permission returns 403 Forbidden
+	delObjReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/objects/builds/artifact-v1.tar.gz", nil)
+	delObjReq.Header.Set("Authorization", "Bearer svc-build-agent:"+created.Secret)
+	delObjResp, err := client.Do(delObjReq)
+	if err != nil {
+		t.Fatalf("DELETE object with Bearer token: %v", err)
+	}
+	delObjResp.Body.Close()
+	if delObjResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden when service account lacks delete permission, got %d", delObjResp.StatusCode)
+	}
+
+	// 7. Admin revokes the service account
+	delSaReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/admin/service-accounts/svc-build-agent", nil)
+	delSaReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	delSaResp, err := client.Do(delSaReq)
+	if err != nil {
+		t.Fatalf("DELETE service account: %v", err)
+	}
+	delSaResp.Body.Close()
+	if delSaResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on revocation, got %d", delSaResp.StatusCode)
+	}
+
+	// 8. Subsequent requests with revoked service account credentials fail with 401 Unauthorized
+	revokedReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/me", nil)
+	revokedReq.SetBasicAuth("svc-build-agent", created.Secret)
+	revokedResp, err := client.Do(revokedReq)
+	if err != nil {
+		t.Fatalf("GET /api/v1/me with revoked service account: %v", err)
+	}
+	revokedResp.Body.Close()
+	if revokedResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized after service account deletion, got %d", revokedResp.StatusCode)
+	}
+}
+
+func TestAccessGrantsAndSettingsLifecycle(t *testing.T) {
+	srv, cfg := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	client := ts.Client()
+
+	// 1. Non-admin rejected with 403 on grants endpoint
+	demoGrantsReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/grants", nil)
+	demoGrantsReq.SetBasicAuth("demo", cfg.BootstrapDemoPassword)
+	demoGrantsResp, err := client.Do(demoGrantsReq)
+	if err != nil {
+		t.Fatalf("demo GET grants: %v", err)
+	}
+	demoGrantsResp.Body.Close()
+	if demoGrantsResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for non-admin on grants, got %d", demoGrantsResp.StatusCode)
+	}
+
+	// 2. Admin creates an Access Grant
+	grantPayload := map[string]interface{}{
+		"subject_type": model.SubjectLocalUser,
+		"subject_id":   "demo",
+		"description":  "Demo user upload access to demos prefix",
+		"prefixes":     []string{"demos/*"},
+		"can_read":     true,
+		"can_upload":   true,
+		"can_delete":   false,
+	}
+	grantBody, _ := json.Marshal(grantPayload)
+	createGrantReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/admin/grants", bytes.NewReader(grantBody))
+	createGrantReq.Header.Set("Content-Type", "application/json")
+	createGrantReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	createGrantResp, err := client.Do(createGrantReq)
+	if err != nil {
+		t.Fatalf("admin POST grants: %v", err)
+	}
+	var createdGrant model.AccessGrant
+	if err := json.NewDecoder(createGrantResp.Body).Decode(&createdGrant); err != nil {
+		t.Fatalf("decode created grant: %v", err)
+	}
+	createGrantResp.Body.Close()
+	if createGrantResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for grant, got %d", createGrantResp.StatusCode)
+	}
+	if createdGrant.ID == "" {
+		t.Fatal("expected non-empty generated grant ID in response")
+	}
+
+	// 3. Admin updates settings
+	settingsPayload := map[string]interface{}{
+		"repository_title":         "Custom Corporate Repository",
+		"default_tree_state":       "collapsed",
+		"enable_html_autoindex":    true,
+		"enable_checksum_sidecars": true,
+		"default_restore_days":     14,
+		"default_restore_tier":     "Expedited",
+		"buckets": []map[string]interface{}{
+			{"id": "primary", "friendly_name": "Primary Bucket", "bucket_name": "corp-artifacts", "region": "us-east-1"},
+		},
+	}
+	settingsBody, _ := json.Marshal(settingsPayload)
+	updateSettingsReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings", bytes.NewReader(settingsBody))
+	updateSettingsReq.Header.Set("Content-Type", "application/json")
+	updateSettingsReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	updateSettingsResp, err := client.Do(updateSettingsReq)
+	if err != nil {
+		t.Fatalf("PUT settings: %v", err)
+	}
+	updateSettingsResp.Body.Close()
+	if updateSettingsResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK updating settings, got %d", updateSettingsResp.StatusCode)
+	}
+
+	// 4. Verify settings updated
+	getSettingsReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/settings", nil)
+	getSettingsReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	getSettingsResp, err := client.Do(getSettingsReq)
+	if err != nil {
+		t.Fatalf("GET settings: %v", err)
+	}
+	var updatedSettings model.AppSettings
+	_ = json.NewDecoder(getSettingsResp.Body).Decode(&updatedSettings)
+	getSettingsResp.Body.Close()
+	if updatedSettings.RepositoryTitle != "Custom Corporate Repository" || updatedSettings.DefaultTreeState != "collapsed" {
+		t.Fatalf("unexpected settings: %+v", updatedSettings)
+	}
+
+	// 5. Admin deletes the grant
+	delGrantReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/admin/grants/"+createdGrant.ID, nil)
+	delGrantReq.SetBasicAuth("admin", cfg.BootstrapAdminPassword)
+	delGrantResp, err := client.Do(delGrantReq)
+	if err != nil {
+		t.Fatalf("DELETE grant: %v", err)
+	}
+	delGrantResp.Body.Close()
+	if delGrantResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on deleting grant, got %d", delGrantResp.StatusCode)
 	}
 }
 
